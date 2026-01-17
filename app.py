@@ -315,6 +315,13 @@ OPERATOR_GROUPS = {
         'UGE Laubst GmbH & Co. KG Umweltgereche Energie',
         'UGE Neuwiese GmbH & Co. KG Umweltgereche Energie',
     ],
+    'LEAG': [
+        'Lausitz Energie Kraftwerke AG',
+        'LEAG Clean Power GmbH',
+    ],
+    'STEAG': [
+        'Iqony Battery System',
+    ],
     'MJ Solarbetriebsgesellschaft': [
         'MJ 6. Solarbetriebsgesellschaft',
         'MJ 13. Solarbetriebsgesellschaft',
