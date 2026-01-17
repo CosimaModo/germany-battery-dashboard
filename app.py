@@ -270,7 +270,7 @@ OPERATOR_GROUPS = {
         'trlyr2 GmbH',
         'trlyr1 GmbH',
     ],
-    'BESS': [
+    'BESS Germany': [
         'BESS Neumünster GmbH & Co. KG',
         'BESS Oberröblingen GmbH & Co. KG',
         'BESS Quedlinburg GmbH & Co. KG',
@@ -278,6 +278,10 @@ OPERATOR_GROUPS = {
         'BESS Hettstedt Fünfte Energie GmbH',
         'BESS Königsee GmbH',
         'BESS Kolitzheim 1 GmbH & Co. KG',
+        'BES Bennewitz GmbH & Co. KG',
+        'BES Groitzsch GmbH& Co. KG',
+        'BES Langenreichenbach GmbH & Co. KG',
+        'BES Dresden Süd GmbH & Co. KG',
     ],
     'TEP': [
         'TEP Juno GmbH & Co. KG',
@@ -290,12 +294,6 @@ OPERATOR_GROUPS = {
         'TEP Lipperhey GmbH & Co. KG',
         'TEP Fortuna GmbH & Co. KG',
         'TEP Lutetia GmbH & Co. KG',
-    ],
-    'BES': [
-        'BES Bennewitz GmbH & Co. KG',
-        'BES Groitzsch GmbH& Co. KG',
-        'BES Langenreichenbach GmbH & Co. KG',
-        'BES Dresden Süd GmbH & Co. KG',
     ],
     'Sunnic Lighthouse': [
         'Sunnic Lighthouse Solar Invest 11 TU 2 GmbH',
