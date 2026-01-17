@@ -764,6 +764,8 @@ COLORS = {
     'text_dark': '#1F2937',    # Dark black for totals
     'border': '#E2E8F0',
     'background': '#F8FAFC',
+    'card_bg': '#FFFFFF',
+    'accent': '#2563EB',       # Bright blue for links/accents
 }
 
 CHART_CONFIG = {'displayModeBar': False}
@@ -780,16 +782,65 @@ CHART_LAYOUT = {
 }
 
 
-def apply_chart_style(fig, height=280):
+def apply_chart_style(fig, height=280, show_grid=False):
     """Apply consistent styling to charts."""
     fig.update_layout(
         height=height,
         **CHART_LAYOUT,
         separators='.,',  # English format: dot for decimal, comma for thousands
     )
-    fig.update_xaxes(gridcolor='#eee', gridwidth=1)
-    fig.update_yaxes(gridcolor='#eee', gridwidth=1, tickformat=',')
+    if show_grid:
+        fig.update_xaxes(gridcolor='#eee', gridwidth=1)
+        fig.update_yaxes(gridcolor='#eee', gridwidth=1, tickformat=',')
+    else:
+        fig.update_xaxes(showgrid=False)
+        fig.update_yaxes(showgrid=False, tickformat=',')
     return fig
+
+
+# =============================================================================
+# DURATION CATEGORIZATION
+# =============================================================================
+# Categories for grouping project durations in visualizations.
+# Logic: <1h special bucket, then 0.5h increments up to 1.5h, then whole hours, 4h+ catch-all
+
+DURATION_CATEGORIES = ['<1h', '1h', '1.5h', '2h', '3h', '4h+']
+
+# Colors for duration categories (gradient from light to dark)
+DURATION_COLORS = {
+    '<1h': '#E8F4FD',   # Lightest blue
+    '1h': '#B8D4E8',
+    '1.5h': '#7FB3D3',
+    '2h': '#4A7C9B',    # Steel blue (matches planned)
+    '3h': '#2D5F7A',
+    '4h+': '#1A365D',   # Navy (matches operational)
+}
+
+
+def categorize_duration(hours):
+    """
+    Categorize duration into buckets for visualization.
+    - <1h: anything less than 1.0 hour
+    - 1h: 1.0 to 1.24h
+    - 1.5h: 1.25 to 1.74h
+    - 2h: 1.75 to 2.49h (rounds to whole numbers from here)
+    - 3h: 2.5 to 3.49h
+    - 4h+: 3.5h and above
+    """
+    if pd.isna(hours):
+        return '2h'  # Default for missing values
+    if hours < 1.0:
+        return '<1h'
+    elif hours < 1.25:
+        return '1h'
+    elif hours < 1.75:
+        return '1.5h'
+    elif hours < 2.5:
+        return '2h'
+    elif hours < 3.5:
+        return '3h'
+    else:
+        return '4h+'
 
 
 # =============================================================================
@@ -821,54 +872,60 @@ def create_summary_cards():
 
     card_base_style = {
         'borderLeft': f'4px solid {COLORS["operational"]}',
-        'borderRadius': '4px',
+        'borderRadius': '6px',
+        'backgroundColor': COLORS['card_bg'],
+        'boxShadow': '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)',
     }
     card_planned_style = {
         'borderLeft': f'4px solid {COLORS["planned"]}',
-        'borderRadius': '4px',
+        'borderRadius': '6px',
+        'backgroundColor': COLORS['card_bg'],
+        'boxShadow': '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)',
     }
     card_total_style = {
         'borderLeft': f'4px solid {COLORS["text_dark"]}',
-        'borderRadius': '4px',
+        'borderRadius': '6px',
+        'backgroundColor': COLORS['card_bg'],
+        'boxShadow': '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)',
     }
     return dbc.Row([
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Operational", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['operational'], 'fontWeight': '600'}),
-                    html.H4(f"{total_operational_mw:,.0f} MW", className="mb-0", style={'color': COLORS['operational'], 'fontWeight': 'bold'}),
-                    html.Small(f"{total_operational_mwh:,.0f} MWh | {count_operational:,} projects | {avg_duration_operational:.1f}h avg", style={'color': COLORS['text_secondary']})
-                ], className="py-2")
-            ], className="mb-2 shadow-sm", style=card_base_style)
+                    html.Div("Operational", className="mb-1", style={'fontSize': '0.75rem', 'color': COLORS['text_secondary'], 'fontWeight': '500', 'textTransform': 'uppercase', 'letterSpacing': '0.5px'}),
+                    html.Div(f"{total_operational_mw:,.0f} MW", className="mb-1", style={'fontSize': '1.75rem', 'color': COLORS['operational'], 'fontWeight': '700', 'lineHeight': '1.2'}),
+                    html.Div(f"{total_operational_mwh:,.0f} MWh | {count_operational:,} projects | {avg_duration_operational:.1f}h avg", style={'color': COLORS['text_secondary'], 'fontSize': '0.75rem'})
+                ], className="py-2 px-3")
+            ], className="mb-2", style=card_base_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("In Planning", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['planned'], 'fontWeight': '600'}),
-                    html.H4(f"{total_planned_mw:,.0f} MW", className="mb-0", style={'color': COLORS['planned'], 'fontWeight': 'bold'}),
-                    html.Small(f"{total_planned_mwh:,.0f} MWh | {count_planned:,} projects | {avg_duration_planned:.1f}h avg", style={'color': COLORS['text_secondary']})
-                ], className="py-2")
-            ], className="mb-2 shadow-sm", style=card_planned_style)
+                    html.Div("In Planning", className="mb-1", style={'fontSize': '0.75rem', 'color': COLORS['text_secondary'], 'fontWeight': '500', 'textTransform': 'uppercase', 'letterSpacing': '0.5px'}),
+                    html.Div(f"{total_planned_mw:,.0f} MW", className="mb-1", style={'fontSize': '1.75rem', 'color': COLORS['planned'], 'fontWeight': '700', 'lineHeight': '1.2'}),
+                    html.Div(f"{total_planned_mwh:,.0f} MWh | {count_planned:,} projects | {avg_duration_planned:.1f}h avg", style={'color': COLORS['text_secondary'], 'fontSize': '0.75rem'})
+                ], className="py-2 px-3")
+            ], className="mb-2", style=card_planned_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Total Pipeline", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['text_dark'], 'fontWeight': '600'}),
-                    html.H4(f"{total_operational_mw + total_planned_mw:,.0f} MW", className="mb-0", style={'color': COLORS['text_dark'], 'fontWeight': 'bold'}),
-                    html.Small(f"{total_operational_mwh + total_planned_mwh:,.0f} MWh | {count_operational + count_planned:,} projects | {avg_duration_total:.1f}h avg", style={'color': COLORS['text_secondary']})
-                ], className="py-2")
-            ], className="mb-2 shadow-sm", style=card_total_style)
+                    html.Div("Total Pipeline", className="mb-1", style={'fontSize': '0.75rem', 'color': COLORS['text_secondary'], 'fontWeight': '500', 'textTransform': 'uppercase', 'letterSpacing': '0.5px'}),
+                    html.Div(f"{total_operational_mw + total_planned_mw:,.0f} MW", className="mb-1", style={'fontSize': '1.75rem', 'color': COLORS['text_dark'], 'fontWeight': '700', 'lineHeight': '1.2'}),
+                    html.Div(f"{total_operational_mwh + total_planned_mwh:,.0f} MWh | {count_operational + count_planned:,} projects | {avg_duration_total:.1f}h avg", style={'color': COLORS['text_secondary'], 'fontSize': '0.75rem'})
+                ], className="py-2 px-3")
+            ], className="mb-2", style=card_total_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Avg Project Size", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['text_dark'], 'fontWeight': '600'}),
-                    html.H4(f"{df['Leistung_MW'].mean():,.1f} MW", className="mb-0", style={'color': COLORS['text_dark'], 'fontWeight': 'bold'}),
-                    html.Small(f"Op: {df[df['Status']=='In Betrieb']['Leistung_MW'].mean():,.1f} | Plan: {df[df['Status']=='In Planung']['Leistung_MW'].mean():,.1f} MW", style={'color': COLORS['text_secondary']})
-                ], className="py-2")
-            ], className="mb-2 shadow-sm", style=card_total_style)
+                    html.Div("Avg Project Size", className="mb-1", style={'fontSize': '0.75rem', 'color': COLORS['text_secondary'], 'fontWeight': '500', 'textTransform': 'uppercase', 'letterSpacing': '0.5px'}),
+                    html.Div(f"{df['Leistung_MW'].mean():,.1f} MW", className="mb-1", style={'fontSize': '1.75rem', 'color': COLORS['text_dark'], 'fontWeight': '700', 'lineHeight': '1.2'}),
+                    html.Div(f"Op: {df[df['Status']=='In Betrieb']['Leistung_MW'].mean():,.1f} | Plan: {df[df['Status']=='In Planung']['Leistung_MW'].mean():,.1f} MW", style={'color': COLORS['text_secondary'], 'fontSize': '0.75rem'})
+                ], className="py-2 px-3")
+            ], className="mb-2", style=card_total_style)
         ], md=3, sm=6),
-    ], className="g-2")
+    ], className="g-3")
 
 
 def create_capacity_trend_chart():
@@ -889,85 +946,166 @@ def create_capacity_trend_chart():
         fig.add_trace(go.Bar(x=d['Year'], y=d['MW'], name=label, marker_color=color, opacity=0.9))
 
     fig.update_layout(
-        title='<b>Annual Capacity Additions (2020+)</b>',
+        title='<b>Annual Capacity Additions</b>',
         xaxis_title='', yaxis_title='MW Added',
         barmode='group'
     )
-    return apply_chart_style(fig, height=280)
+    fig = apply_chart_style(fig, height=280, show_grid=False)
+    fig.update_layout(legend=dict(orientation='h', yanchor='bottom', y=0.92, xanchor='right', x=1, font=dict(size=10)))
+    return fig
 
 
 def create_cumulative_capacity_chart():
-    """Create cumulative capacity chart showing total installed base over time."""
-    # Get ALL operational projects (including pre-2020) for true cumulative
-    df_operational = df[df['Status'] == 'In Betrieb'].dropna(subset=['Jahr']).copy()
+    """Create cumulative capacity stacked area chart by duration category.
 
-    # Group by year
-    yearly_op = df_operational.groupby('Jahr')['Leistung_MW'].sum().reset_index()
-    yearly_op.columns = ['Year', 'MW']
-    yearly_op = yearly_op.sort_values('Year')
+    Logic:
+    - 2020-2025: Only operational projects (actual installed capacity)
+    - 2026-2029: All projects (operational + planned pipeline)
+    - Grey overlay on 2026+ region with 'Planned' annotation
+    - Callouts showing total MW at each year
+    """
+    # Get all projects with valid year and duration
+    df_chart = df.dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
 
-    # Calculate true cumulative (sum of all capacity up to and including each year)
-    yearly_op['Cumulative'] = yearly_op['MW'].cumsum()
+    # Add duration category
+    df_chart['Duration_Category'] = df_chart['Dauer_Stunden'].apply(categorize_duration)
 
-    # Filter to show from 2020 onwards, but cumulative includes everything before
-    # First, calculate the base (everything before 2020)
-    base_capacity = yearly_op[yearly_op['Year'] < 2020]['MW'].sum()
+    # Define year range
+    all_years = list(range(2020, 2030))
 
-    # Now filter to 2020+
-    yearly_op_display = yearly_op[yearly_op['Year'] >= 2020].copy()
+    # Build cumulative data with the operational/planned logic
+    cumulative_data = []
+    year_totals = {}  # Store total MW for each year for callouts
 
-    # For planned projects, show what the cumulative WOULD be if they come online
-    df_planned = df[df['Status'] == 'In Planung'].dropna(subset=['Jahr']).copy()
-    yearly_planned = df_planned.groupby('Jahr')['Leistung_MW'].sum().reset_index()
-    yearly_planned.columns = ['Year', 'MW']
-    yearly_planned = yearly_planned.sort_values('Year')
+    for year in all_years:
+        if year <= 2025:
+            # Up to 2025: only operational projects
+            projects_up_to_year = df_chart[
+                (df_chart['Jahr'] <= year) &
+                (df_chart['Status'] == 'In Betrieb')
+            ]
+        else:
+            # 2026+: operational base + planned projects cumulative by year
+            # First get all operational up to 2025
+            operational_base = df_chart[
+                (df_chart['Jahr'] <= 2025) &
+                (df_chart['Status'] == 'In Betrieb')
+            ]
+            # For planned projects: include those with Jahr <= current year
+            # All planned projects with Jahr <= current year get included
+            planned_up_to_year = df_chart[
+                (df_chart['Status'] == 'In Planung') &
+                (df_chart['Jahr'] <= year)
+            ]
+            # Combine all
+            projects_up_to_year = pd.concat([operational_base, planned_up_to_year]).drop_duplicates()
 
-    # Get the last operational cumulative value
-    if len(yearly_op_display) > 0:
-        last_operational_year = yearly_op_display['Year'].max()
-        last_operational_cumulative = yearly_op_display['Cumulative'].max()
-    else:
-        last_operational_year = 2020
-        last_operational_cumulative = base_capacity
+        # Calculate total for this year (for callouts)
+        year_totals[year] = projects_up_to_year['Leistung_MW'].sum()
 
-    # Calculate planned cumulative (starting from last operational)
-    yearly_planned = yearly_planned[yearly_planned['Year'] > last_operational_year].copy()
-    if len(yearly_planned) > 0:
-        yearly_planned['Cumulative'] = last_operational_cumulative + yearly_planned['MW'].cumsum()
+        # Group by duration category
+        for cat in DURATION_CATEGORIES:
+            cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
+            cumulative_data.append({
+                'Year': int(year),
+                'Duration': cat,
+                'MW': cat_mw
+            })
+
+    df_cumulative = pd.DataFrame(cumulative_data)
 
     fig = go.Figure()
 
-    # Operational cumulative line
-    fig.add_trace(go.Scatter(
-        x=yearly_op_display['Year'],
-        y=yearly_op_display['Cumulative'],
-        name='Operational (cumulative)',
-        mode='lines+markers',
-        line=dict(color=COLORS['operational'], width=3),
-        marker=dict(size=8)
-    ))
+    # Add stacked areas in order (shortest duration at bottom)
+    for cat in DURATION_CATEGORIES:
+        cat_data = df_cumulative[df_cumulative['Duration'] == cat].sort_values('Year')
+        if len(cat_data) > 0:
+            fig.add_trace(go.Scatter(
+                x=cat_data['Year'],
+                y=cat_data['MW'],
+                name=cat,
+                mode='lines',
+                line=dict(width=0.5, color=DURATION_COLORS[cat]),
+                fill='tonexty' if cat != DURATION_CATEGORIES[0] else 'tozeroy',
+                fillcolor=DURATION_COLORS[cat],
+                stackgroup='one',
+                hovertemplate=f'{cat}: %{{y:,.0f}} MW<extra></extra>'
+            ))
 
-    # Planned cumulative line (projected)
-    if len(yearly_planned) > 0:
-        # Connect from last operational point
-        x_planned = [last_operational_year] + list(yearly_planned['Year'])
-        y_planned = [last_operational_cumulative] + list(yearly_planned['Cumulative'])
+    # Add grey overlay for planned region (2026-2029)
+    max_y = max(year_totals.values()) * 1.15 if year_totals else 10000
+    fig.add_shape(
+        type='rect',
+        x0=2025.5, x1=2029.5,
+        y0=0, y1=max_y,
+        fillcolor='rgba(100, 116, 139, 0.08)',
+        line=dict(width=0),
+        layer='above'
+    )
 
-        fig.add_trace(go.Scatter(
-            x=x_planned,
-            y=y_planned,
-            name='+ Planned (projected)',
-            mode='lines+markers',
-            line=dict(color=COLORS['planned'], width=3, dash='dash'),
-            marker=dict(size=8)
-        ))
+    # Add "Operational" annotation at top-left of the chart area (below legend)
+    fig.add_annotation(
+        x=2020.2,
+        y=max_y * 0.95,
+        text="<i>Operational</i>",
+        showarrow=False,
+        font=dict(size=10, color='#64748B'),
+        xanchor='left'
+    )
+
+    # Add "Planned" annotation at top-left corner of the grey area (below legend)
+    fig.add_annotation(
+        x=2025.6,
+        y=max_y * 0.95,
+        text="<i>Planned</i>",
+        showarrow=False,
+        font=dict(size=10, color='#64748B'),
+        xanchor='left'
+    )
+
+    # Add callouts for total MW at each year (in GW format with suffix)
+    for year, total_mw in year_totals.items():
+        if total_mw > 0:
+            # Show in GW format with suffix
+            label = f"{total_mw/1000:.1f} GW"
+
+            fig.add_annotation(
+                x=year,
+                y=total_mw,
+                text=label,
+                showarrow=False,
+                font=dict(size=7, color=COLORS['text_secondary']),
+                yshift=18,
+                xanchor='center'
+            )
 
     fig.update_layout(
-        title='<b>Cumulative Installed Capacity</b>',
+        title='<b>Cumulative Installed Capacity by Duration</b>',
         xaxis_title='',
-        yaxis_title='Total MW Installed',
+        yaxis_title='Total MW',
+        hovermode='x unified',
+        yaxis=dict(range=[0, max_y * 1.05])  # Extend y-axis for callout labels
     )
-    return apply_chart_style(fig, height=280)
+
+    # Configure x-axis to avoid overlap with y-axis labels - add space before 2020
+    fig.update_xaxes(
+        tickmode='array',
+        tickvals=list(range(2020, 2030)),
+        ticktext=['  2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027', '2028', '2029'],
+        range=[2019.5, 2029.5]
+    )
+
+    fig = apply_chart_style(fig, height=280, show_grid=False)
+    fig.update_layout(legend=dict(
+        orientation='h',
+        yanchor='bottom',
+        y=0.92,
+        xanchor='right',
+        x=1,
+        font=dict(size=8),
+        traceorder='normal'
+    ))
+    return fig
 
 
 def create_duration_trend_chart():
@@ -1003,7 +1141,7 @@ def create_duration_trend_chart():
                                      mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
 
     fig.update_layout(title='<b>Cumulative Avg Duration</b>', xaxis_title='', yaxis_title='Hours (MW-weighted)')
-    return apply_chart_style(fig, height=250)
+    return apply_chart_style(fig, height=250, show_grid=False)
 
 
 def create_size_trend_chart():
@@ -1034,7 +1172,7 @@ def create_size_trend_chart():
                                      mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
 
     fig.update_layout(title='<b>Cumulative Avg Project Size</b>', xaxis_title='', yaxis_title='Avg MW')
-    return apply_chart_style(fig, height=250)
+    return apply_chart_style(fig, height=250, show_grid=False)
 
 
 def create_operator_chart(status, color, title):
@@ -1195,13 +1333,48 @@ def create_excel_export():
         yearly.columns = ['Year', 'Status', 'MW', 'MWh', 'Project Count']
         yearly.to_excel(writer, sheet_name='Annual Additions', index=False)
 
-        # Sheet 3: Cumulative Capacity
-        df_operational = df[df['Status'] == 'In Betrieb'].dropna(subset=['Jahr']).copy()
-        yearly_op = df_operational.groupby('Jahr')['Leistung_MW'].sum().reset_index()
-        yearly_op.columns = ['Year', 'MW Added']
-        yearly_op = yearly_op.sort_values('Year')
-        yearly_op['Cumulative MW'] = yearly_op['MW Added'].cumsum()
-        yearly_op.to_excel(writer, sheet_name='Cumulative Capacity', index=False)
+        # Sheet 3: Cumulative Capacity by Duration (matches dashboard chart)
+        # Uses same logic as create_cumulative_capacity_chart:
+        # - 2020-2025: Only operational projects
+        # - 2026-2029: Operational base + planned projects cumulative by year
+        df_chart = df.dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
+        df_chart['Duration_Category'] = df_chart['Dauer_Stunden'].apply(categorize_duration)
+
+        all_years = list(range(2020, 2030))
+        cumulative_data = []
+
+        for year in all_years:
+            if year <= 2025:
+                # Up to 2025: only operational projects
+                projects_up_to_year = df_chart[
+                    (df_chart['Jahr'] <= year) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+                period_type = 'Operational'
+            else:
+                # 2026+: operational base + planned projects cumulative by year
+                operational_base = df_chart[
+                    (df_chart['Jahr'] <= 2025) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+                planned_up_to_year = df_chart[
+                    (df_chart['Status'] == 'In Planung') &
+                    (df_chart['Jahr'] <= year)
+                ]
+                projects_up_to_year = pd.concat([operational_base, planned_up_to_year]).drop_duplicates()
+                period_type = 'Operational + Planned'
+
+            row = {'Year': year, 'Type': period_type}
+            total_mw = 0
+            for cat in DURATION_CATEGORIES:
+                cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
+                row[f'{cat} (MW)'] = cat_mw
+                total_mw += cat_mw
+            row['Total MW'] = total_mw
+            row['Total GW'] = total_mw / 1000
+            cumulative_data.append(row)
+
+        pd.DataFrame(cumulative_data).to_excel(writer, sheet_name='Cumulative Capacity', index=False)
 
         # Sheet 4: Duration Trend
         duration_data = []
@@ -1310,28 +1483,35 @@ app.layout = dbc.Container([
     # Header
     dbc.Row([
         dbc.Col([
-            html.H4("German Grid-Scale Battery Storage Tracker", className="mb-1",
-                    style={'color': COLORS['text_primary'], 'fontWeight': 'bold'}),
+            html.H3("German Grid-Scale Battery Storage Tracker", className="mb-0",
+                    style={'color': COLORS['text_primary'], 'fontWeight': '700', 'letterSpacing': '-0.5px'}),
         ])
-    ], className="mb-2 mt-3"),
+    ], className="mb-3 mt-4"),
 
     # Data source link and Export button - full width bar
     dbc.Row([
         dbc.Col([
             html.Div([
-                html.Span([
-                    html.Strong("Data Source: ", style={'color': COLORS['text_primary']}),
+                html.Div([
+                    html.Span("Data: ", style={'color': COLORS['text_secondary'], 'fontWeight': '500'}),
                     html.A("Marktstammdatenregister (MaStR)", href=MASTR_DATA_URL, target="_blank",
-                           style={'color': COLORS['operational'], 'textDecoration': 'none', 'fontWeight': '500'}),
-                    html.Span(" | ", style={'color': COLORS['text_secondary'], 'margin': '0 8px'}),
-                    html.Span("Includes all registered operational and planned battery storage projects ≥1 MW",
+                           style={'color': COLORS['accent'], 'textDecoration': 'none', 'fontWeight': '500'}),
+                    html.Span(" — ", style={'color': COLORS['border'], 'margin': '0 6px'}),
+                    html.Span("All registered battery storage projects ≥1 MW",
                               style={'color': COLORS['text_secondary']})
                 ]),
                 dbc.Button(
                     "Export Excel",
                     id="export-excel-btn",
                     size="sm",
-                    style={'backgroundColor': COLORS['operational'], 'border': 'none', 'marginLeft': 'auto'}
+                    style={
+                        'backgroundColor': COLORS['operational'],
+                        'border': 'none',
+                        'marginLeft': 'auto',
+                        'fontWeight': '500',
+                        'borderRadius': '4px',
+                        'padding': '6px 14px',
+                    }
                 ),
                 dcc.Download(id="download-excel")
             ], style={
@@ -1339,17 +1519,21 @@ app.layout = dbc.Container([
                 'alignItems': 'center',
                 'justifyContent': 'space-between',
                 'backgroundColor': COLORS['background'],
-                'padding': '10px 16px',
-                'borderRadius': '4px',
+                'padding': '12px 16px',
+                'borderRadius': '6px',
                 'border': f'1px solid {COLORS["border"]}',
                 'fontSize': '0.85rem',
-                'marginBottom': '12px'
+                'marginBottom': '16px'
             })
         ])
     ]),
 
     # Summary Cards
     create_summary_cards(),
+
+    # Section: Capacity Trends
+    html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
+    html.H5("Capacity Trends", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
 
     # Capacity Trends - Annual and Cumulative side by side
     dbc.Row([
@@ -1359,7 +1543,7 @@ app.layout = dbc.Container([
         dbc.Col([
             dcc.Graph(figure=create_cumulative_capacity_chart(), config=CHART_CONFIG)
         ], md=6)
-    ], className="mt-3"),
+    ]),
 
     # Duration and Size Trends - side by side
     dbc.Row([
@@ -1369,7 +1553,11 @@ app.layout = dbc.Container([
         dbc.Col([
             dcc.Graph(figure=create_size_trend_chart(), config=CHART_CONFIG)
         ], md=6)
-    ]),
+    ], className="mt-2"),
+
+    # Section: Market Players
+    html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
+    html.H5("Market Players", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
 
     # Operator Analysis - side by side
     dbc.Row([
@@ -1381,6 +1569,10 @@ app.layout = dbc.Container([
         ], md=6)
     ]),
 
+    # Section: Project Analysis
+    html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
+    html.H5("Project Analysis", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
+
     # Largest Projects and Longest Duration - side by side
     dbc.Row([
         dbc.Col([
@@ -1391,14 +1583,18 @@ app.layout = dbc.Container([
         ], md=6)
     ]),
 
+    # Section: Regional Analysis
+    html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
+    html.H5("Regional Analysis", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
+
     # Bundesland Analysis
     dbc.Row([
         dbc.Col([
             dcc.Graph(figure=create_bundesland_chart(), config=CHART_CONFIG)
         ], md=7),
         dbc.Col([
-            html.H6("Summary by State", className="mb-2",
-                    style={'fontWeight': 'bold', 'fontSize': '14px', 'color': COLORS['text_primary']}),
+            html.Div("Summary by State", className="mb-2",
+                    style={'fontWeight': '600', 'fontSize': '14px', 'color': COLORS['text_primary']}),
             dash_table.DataTable(
                 data=create_bundesland_table().to_dict('records'),
                 columns=[
@@ -1408,28 +1604,30 @@ app.layout = dbc.Container([
                     {'name': 'Avg MW', 'id': 'Avg MW', 'type': 'numeric', 'format': {'specifier': ',.1f'}},
                     {'name': 'Dur (h)', 'id': 'Avg Duration', 'type': 'numeric', 'format': {'specifier': '.1f'}}
                 ],
-                style_table={'overflowX': 'auto'},
-                style_cell={'textAlign': 'left', 'padding': '6px 10px', 'fontSize': '11px', 'color': COLORS['text_secondary']},
-                style_header={'backgroundColor': COLORS['background'], 'fontWeight': 'bold', 'fontSize': '11px',
-                              'color': COLORS['text_primary'], 'borderBottom': f'2px solid {COLORS["border"]}'},
+                style_table={'overflowX': 'auto', 'borderRadius': '6px', 'border': f'1px solid {COLORS["border"]}'},
+                style_cell={'textAlign': 'left', 'padding': '8px 10px', 'fontSize': '11px', 'color': COLORS['text_secondary'], 'border': 'none'},
+                style_header={'backgroundColor': COLORS['background'], 'fontWeight': '600', 'fontSize': '11px',
+                              'color': COLORS['text_primary'], 'borderBottom': f'1px solid {COLORS["border"]}', 'border': 'none'},
                 style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': COLORS['background']}],
                 page_size=16
             )
         ], md=5)
-    ], className="mt-2"),
+    ]),
 
     # Netzbetreiber (Grid Operator) Analysis
     dbc.Row([
         dbc.Col([
             dcc.Graph(figure=create_netzbetreiber_chart(), config=CHART_CONFIG)
         ])
-    ], className="mt-2"),
+    ], className="mt-3"),
+
+    # Section: Project Data
+    html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
+    html.H5("All Projects", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
 
     # Project Table
     dbc.Row([
         dbc.Col([
-            html.H6("Project Overview", className="mt-3 mb-2",
-                    style={'fontWeight': 'bold', 'fontSize': '14px', 'color': COLORS['text_primary']}),
             dash_table.DataTable(
                 id='project-table',
                 columns=[
@@ -1444,11 +1642,11 @@ app.layout = dbc.Container([
                     {'name': 'Year', 'id': 'Jahr', 'type': 'numeric', 'format': {'specifier': '.0f'}}
                 ],
                 data=df.sort_values('Leistung_MW', ascending=False).to_dict('records'),
-                style_table={'overflowX': 'auto'},
-                style_cell={'textAlign': 'left', 'padding': '6px 10px', 'fontSize': '11px', 'maxWidth': '200px',
-                            'overflow': 'hidden', 'textOverflow': 'ellipsis', 'color': COLORS['text_secondary']},
-                style_header={'backgroundColor': COLORS['background'], 'fontWeight': 'bold', 'fontSize': '11px',
-                              'color': COLORS['text_primary'], 'borderBottom': f'2px solid {COLORS["border"]}'},
+                style_table={'overflowX': 'auto', 'borderRadius': '6px', 'border': f'1px solid {COLORS["border"]}'},
+                style_cell={'textAlign': 'left', 'padding': '8px 12px', 'fontSize': '11px', 'maxWidth': '200px',
+                            'overflow': 'hidden', 'textOverflow': 'ellipsis', 'color': COLORS['text_secondary'], 'border': 'none'},
+                style_header={'backgroundColor': COLORS['background'], 'fontWeight': '600', 'fontSize': '11px',
+                              'color': COLORS['text_primary'], 'borderBottom': f'1px solid {COLORS["border"]}', 'border': 'none'},
                 style_data_conditional=[
                     {'if': {'row_index': 'odd'}, 'backgroundColor': COLORS['background']},
                     {'if': {'filter_query': '{Status} = "In Betrieb"', 'column_id': 'Status'},
@@ -1464,14 +1662,15 @@ app.layout = dbc.Container([
     # Footer
     dbc.Row([
         dbc.Col([
-            html.Hr(style={'borderColor': COLORS['border'], 'marginTop': '24px', 'marginBottom': '12px'}),
-            html.Small([
-                f"Last updated: {datetime.now().strftime('%Y-%m-%d')} | {len(df):,} projects after filtering"
-            ], style={'color': COLORS['text_secondary']})
+            html.Div([
+                html.Span(f"Last updated: {datetime.now().strftime('%Y-%m-%d')}", style={'color': COLORS['text_secondary']}),
+                html.Span(" | ", style={'color': COLORS['border'], 'margin': '0 8px'}),
+                html.Span(f"{len(df):,} projects after filtering", style={'color': COLORS['text_secondary']})
+            ], style={'fontSize': '0.8rem', 'marginTop': '24px', 'paddingTop': '16px', 'borderTop': f'1px solid {COLORS["border"]}'})
         ])
-    ], className="mb-3")
+    ], className="mb-4")
 
-], fluid=True, style={'maxWidth': '1400px', 'backgroundColor': '#ffffff'})
+], fluid=True, style={'maxWidth': '1400px', 'backgroundColor': '#ffffff', 'fontFamily': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'})
 
 
 @callback(
