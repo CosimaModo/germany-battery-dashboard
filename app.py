@@ -1368,7 +1368,7 @@ def create_excel_export():
             total_mw = 0
             for cat in DURATION_CATEGORIES:
                 cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
-                row[f'{cat} (MW)'] = cat_mw
+                row[cat] = cat_mw
                 total_mw += cat_mw
             row['Total MW'] = total_mw
             row['Total GW'] = total_mw / 1000
