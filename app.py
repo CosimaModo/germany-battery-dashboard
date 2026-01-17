@@ -88,12 +88,12 @@ def apply_outlier_filters(df, rules=OUTLIER_RULES):
 
 
 # =============================================================================
-# OWNER CONSOLIDATION
+# OPERATOR CONSOLIDATION
 # =============================================================================
 # Maps multiple entity names to their parent company for cleaner analysis.
-# Original owner names are preserved in 'Betreiber_Original' column.
+# Original operator names are preserved in 'Betreiber_Original' column.
 
-OWNER_GROUPS = {
+OPERATOR_GROUPS = {
     'ECO STOR': [
         'ECO POWER FOUR GmbH',
         'ECO POWER SIX GmbH',
@@ -400,16 +400,16 @@ OWNER_GROUPS = {
         '27. Lintas Energiepark GmbH & Co. KG',
         '29. Lintas Energiepark GmbH & Co. KG',
     ],
-    'Iniku': [
+    'Eneco': [
         'EnspireME',
     ],
 }
 
 # Build reverse lookup: entity name -> parent group
-_OWNER_LOOKUP = {}
-for parent, entities in OWNER_GROUPS.items():
+_OPERATOR_LOOKUP = {}
+for parent, entities in OPERATOR_GROUPS.items():
     for entity in entities:
-        _OWNER_LOOKUP[entity] = parent
+        _OPERATOR_LOOKUP[entity] = parent
 
 
 # =============================================================================
@@ -481,20 +481,20 @@ def consolidate_netzbetreiber_names(df):
     return df
 
 
-def consolidate_owner_names(df):
+def consolidate_operator_names(df):
     """
-    Consolidate owner names to parent company groups.
+    Consolidate operator names to parent company groups.
     Preserves original names in 'Betreiber_Original' column.
     """
     if 'Betreiber' not in df.columns:
         return df
 
-    # Preserve original owner name
+    # Preserve original operator name
     df['Betreiber_Original'] = df['Betreiber']
 
     # Map to consolidated parent group (or keep original if no match)
     df['Betreiber'] = df['Betreiber_Original'].apply(
-        lambda x: _OWNER_LOOKUP.get(x, x)
+        lambda x: _OPERATOR_LOOKUP.get(x, x)
     )
 
     # Count how many were consolidated
@@ -503,10 +503,136 @@ def consolidate_owner_names(df):
     unique_after = df['Betreiber'].nunique()
 
     if consolidated_count > 0:
-        print(f"Owner consolidation: {consolidated_count} projects mapped to parent groups")
-        print(f"  Unique owners: {unique_before} -> {unique_after}")
+        print(f"Operator consolidation: {consolidated_count} projects mapped to parent groups")
+        print(f"  Unique operators: {unique_before} -> {unique_after}")
 
     return df
+
+
+# =============================================================================
+# PROJECT CONSOLIDATION
+# =============================================================================
+# Combines multi-part projects (e.g., "Speicher X - Teilanlage 1/2/3") into single entries.
+# Sums MW and MWh, recalculates duration. Original names preserved in 'Anlagename_Original_Parts'.
+
+PROJECT_GROUPS = {
+    # Maps consolidated project name -> list of original project names to combine
+    'Speicher Beilrode I': [
+        'Speicher Beilrode I - Teilanlage 1',
+        'Speicher Beilrode I - Teilanlage 5',
+        'Speicher Beilrode I - Teilanlage 6',
+    ],
+    'Speicher Beilrode II': [
+        'Speicher Beilrode II - Teilanlage 1',
+        'Speicher Beilrode II - Teilanlage 2 (Inn24-1-047)',
+    ],
+    'Speicher Jerchel West': [
+        'Speicher Jerchel West - Teilanlage 2',
+        'Speicher Jerchel West - Teilanlage 3',
+    ],
+    'Speicher Martinsheim': [
+        'Speicher Martinsheim - P23-148 - Teil 1',
+        'Speicher Martinsheim - P23-148 - Teil 2',
+    ],
+    'Speicher Schrobenhausen IX': [
+        'Speicher Schrobenhausen IX - P22-591 - Teil 1',
+        'Speicher Schrobenhausen IX - P22-591 - Teil 2',
+    ],
+    'Speicher Schrobenhausen-Sandizell I': [
+        'Speicher Schrobenhausen-Sandizell I - P20-105 - Teil 1',
+        'Speicher Schrobenhausen-Sandizell I - P20-105 - Teil 2',
+    ],
+    'Speicher Prosselsheim': [
+        'Speicher Prosselsheim - P23-089 - Teil 1',
+        'Speicher Prosselsheim - P23-089 - Teil 2',
+    ],
+    'Speicher Colbitz II': [
+        'Speicher Colbitz II - P23-206 - Teil 1',
+        'Speicher Colbitz II - P23-206 - Teil 2',
+    ],
+    'Speicher Mallersdorf-Pfaffenberg II': [
+        'Speicher Mallersdorf-Pfaffenberg II - P23-120 - Teil 1',
+        'Speicher Mallersdorf-Pfaffenberg II - P23-120 - Teil 2',
+    ],
+    'Speicher GG III': [
+        'GG III 8.111,04 kWp (Teil I) Speicher',
+        'Speicher GG III (Teil 2)',
+    ],
+    'Speicher Polt III': [
+        'Speicher Polt III 4.600 kW(Teil 1)',
+        'Speicher Polt III  (Teil 2)',
+    ],
+}
+
+# Build reverse lookup: original project name -> consolidated name
+_PROJECT_LOOKUP = {}
+for consolidated_name, parts in PROJECT_GROUPS.items():
+    for part in parts:
+        _PROJECT_LOOKUP[part] = consolidated_name
+
+
+def consolidate_multi_part_projects(df):
+    """
+    Consolidate multi-part projects into single entries.
+    Sums MW and MWh, recalculates duration.
+    Preserves original names in 'Anlagename_Original_Parts' column.
+    """
+    if 'Anlagename' not in df.columns:
+        return df
+
+    # Find rows that need consolidation
+    projects_to_consolidate = set(_PROJECT_LOOKUP.keys())
+    mask_to_consolidate = df['Anlagename'].isin(projects_to_consolidate)
+
+    if not mask_to_consolidate.any():
+        return df
+
+    # Separate rows: ones to consolidate vs ones to keep as-is
+    df_to_consolidate = df[mask_to_consolidate].copy()
+    df_keep = df[~mask_to_consolidate].copy()
+
+    # Add original parts column to kept rows (just their own name)
+    df_keep['Anlagename_Original_Parts'] = df_keep['Anlagename']
+
+    # Group and aggregate the parts
+    df_to_consolidate['Consolidated_Name'] = df_to_consolidate['Anlagename'].map(_PROJECT_LOOKUP)
+
+    consolidated_rows = []
+    for consolidated_name, group_df in df_to_consolidate.groupby('Consolidated_Name'):
+        # Sum MW and MWh
+        total_mw = group_df['Leistung_MW'].sum()
+        total_mwh = group_df['Kapazitaet_MWh'].sum()
+        new_duration = total_mwh / total_mw if total_mw > 0 else None
+
+        # Get original part names
+        original_parts = '; '.join(sorted(group_df['Anlagename'].tolist()))
+
+        # Take first row as template and update values
+        row = group_df.iloc[0].copy()
+        row['Anlagename'] = consolidated_name
+        row['Leistung_MW'] = total_mw
+        row['Kapazitaet_MWh'] = total_mwh
+        row['Dauer_Stunden'] = new_duration
+        row['Anlagename_Original_Parts'] = original_parts
+
+        # Use earliest year if multiple years
+        if 'Jahr' in group_df.columns:
+            row['Jahr'] = group_df['Jahr'].min()
+
+        consolidated_rows.append(row)
+
+    # Create dataframe from consolidated rows
+    df_consolidated = pd.DataFrame(consolidated_rows)
+
+    # Combine back with kept rows
+    df_result = pd.concat([df_keep, df_consolidated], ignore_index=True)
+
+    # Count consolidations
+    parts_consolidated = mask_to_consolidate.sum()
+    new_projects = len(consolidated_rows)
+    print(f"Project consolidation: {parts_consolidated} parts -> {new_projects} projects (net reduction: {parts_consolidated - new_projects})")
+
+    return df_result
 
 
 # =============================================================================
@@ -584,11 +710,14 @@ def load_and_process_data(filepath):
     # Apply outlier filters
     df = apply_outlier_filters(df)
 
-    # Consolidate owner names to parent groups
-    df = consolidate_owner_names(df)
+    # Consolidate operator names to parent groups
+    df = consolidate_operator_names(df)
 
     # Consolidate Netzbetreiber names
     df = consolidate_netzbetreiber_names(df)
+
+    # Consolidate multi-part projects into single entries
+    df = consolidate_multi_part_projects(df)
 
     return df
 
@@ -621,15 +750,30 @@ def get_data():
 
 
 # =============================================================================
-# CHART STYLING - Compact and clean
+# CHART STYLING - Corporate and professional
 # =============================================================================
+
+# Color palette - Navy/Steel Blue theme
+COLORS = {
+    'operational': '#1A365D',  # Navy blue
+    'planned': '#4A7C9B',      # Steel blue
+    'operational_light': 'rgba(26, 54, 93, 0.2)',
+    'planned_light': 'rgba(74, 124, 155, 0.2)',
+    'text_primary': '#1A365D',
+    'text_secondary': '#64748B',
+    'text_dark': '#1F2937',    # Dark black for totals
+    'border': '#E2E8F0',
+    'background': '#F8FAFC',
+}
 
 CHART_CONFIG = {'displayModeBar': False}
 
 CHART_LAYOUT = {
-    'margin': dict(l=40, r=20, t=40, b=40),
-    'font': dict(size=11),
-    'title_font_size': 13,
+    'margin': dict(l=40, r=20, t=50, b=40),
+    'font': dict(size=11, color=COLORS['text_secondary']),
+    'title_font_size': 14,
+    'title_font_color': COLORS['text_primary'],
+    'title_font_weight': 'bold',
     'legend': dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(size=10)),
     'paper_bgcolor': 'rgba(0,0,0,0)',
     'plot_bgcolor': 'rgba(0,0,0,0)',
@@ -640,10 +784,11 @@ def apply_chart_style(fig, height=280):
     """Apply consistent styling to charts."""
     fig.update_layout(
         height=height,
-        **CHART_LAYOUT
+        **CHART_LAYOUT,
+        separators='.,',  # English format: dot for decimal, comma for thousands
     )
     fig.update_xaxes(gridcolor='#eee', gridwidth=1)
-    fig.update_yaxes(gridcolor='#eee', gridwidth=1)
+    fig.update_yaxes(gridcolor='#eee', gridwidth=1, tickformat=',')
     return fig
 
 
@@ -652,7 +797,7 @@ def apply_chart_style(fig, height=280):
 # =============================================================================
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
-app.title = "Germany Battery Storage Dashboard"
+app.title = "German Grid-Scale Battery Storage Tracker"
 server = app.server  # Required for gunicorn/Render deployment
 
 # Load data
@@ -670,44 +815,58 @@ count_planned = len(df[df['Status'] == 'In Planung'])
 
 
 def create_summary_cards():
-    """Create compact summary statistic cards."""
-    card_style = "mb-2 shadow-sm"
+    """Create compact summary statistic cards with accent borders."""
+    # Calculate total average duration
+    avg_duration_total = df['Dauer_Stunden'].mean()
+
+    card_base_style = {
+        'borderLeft': f'4px solid {COLORS["operational"]}',
+        'borderRadius': '4px',
+    }
+    card_planned_style = {
+        'borderLeft': f'4px solid {COLORS["planned"]}',
+        'borderRadius': '4px',
+    }
+    card_total_style = {
+        'borderLeft': f'4px solid {COLORS["text_dark"]}',
+        'borderRadius': '4px',
+    }
     return dbc.Row([
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Operational", className="text-success mb-1", style={'fontSize': '0.85rem'}),
-                    html.H4(f"{total_operational_mw:,.0f} MW", className="text-success mb-0"),
-                    html.Small(f"{total_operational_mwh:,.0f} MWh | {count_operational} projects | {avg_duration_operational:.1f}h avg", className="text-muted")
+                    html.H6("Operational", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['operational'], 'fontWeight': '600'}),
+                    html.H4(f"{total_operational_mw:,.0f} MW", className="mb-0", style={'color': COLORS['operational'], 'fontWeight': 'bold'}),
+                    html.Small(f"{total_operational_mwh:,.0f} MWh | {count_operational:,} projects | {avg_duration_operational:.1f}h avg", style={'color': COLORS['text_secondary']})
                 ], className="py-2")
-            ], className=card_style)
+            ], className="mb-2 shadow-sm", style=card_base_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("In Planning", className="text-warning mb-1", style={'fontSize': '0.85rem'}),
-                    html.H4(f"{total_planned_mw:,.0f} MW", className="text-warning mb-0"),
-                    html.Small(f"{total_planned_mwh:,.0f} MWh | {count_planned} projects | {avg_duration_planned:.1f}h avg", className="text-muted")
+                    html.H6("In Planning", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['planned'], 'fontWeight': '600'}),
+                    html.H4(f"{total_planned_mw:,.0f} MW", className="mb-0", style={'color': COLORS['planned'], 'fontWeight': 'bold'}),
+                    html.Small(f"{total_planned_mwh:,.0f} MWh | {count_planned:,} projects | {avg_duration_planned:.1f}h avg", style={'color': COLORS['text_secondary']})
                 ], className="py-2")
-            ], className=card_style)
+            ], className="mb-2 shadow-sm", style=card_planned_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Total Pipeline", className="text-primary mb-1", style={'fontSize': '0.85rem'}),
-                    html.H4(f"{total_operational_mw + total_planned_mw:,.0f} MW", className="text-primary mb-0"),
-                    html.Small(f"{total_operational_mwh + total_planned_mwh:,.0f} MWh | {count_operational + count_planned} projects", className="text-muted")
+                    html.H6("Total Pipeline", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['text_dark'], 'fontWeight': '600'}),
+                    html.H4(f"{total_operational_mw + total_planned_mw:,.0f} MW", className="mb-0", style={'color': COLORS['text_dark'], 'fontWeight': 'bold'}),
+                    html.Small(f"{total_operational_mwh + total_planned_mwh:,.0f} MWh | {count_operational + count_planned:,} projects | {avg_duration_total:.1f}h avg", style={'color': COLORS['text_secondary']})
                 ], className="py-2")
-            ], className=card_style)
+            ], className="mb-2 shadow-sm", style=card_total_style)
         ], md=3, sm=6),
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
-                    html.H6("Avg Project Size", className="text-info mb-1", style={'fontSize': '0.85rem'}),
-                    html.H4(f"{df['Leistung_MW'].mean():,.1f} MW", className="text-info mb-0"),
-                    html.Small(f"Op: {df[df['Status']=='In Betrieb']['Leistung_MW'].mean():,.1f} | Plan: {df[df['Status']=='In Planung']['Leistung_MW'].mean():,.1f} MW", className="text-muted")
+                    html.H6("Avg Project Size", className="mb-1", style={'fontSize': '0.85rem', 'color': COLORS['text_dark'], 'fontWeight': '600'}),
+                    html.H4(f"{df['Leistung_MW'].mean():,.1f} MW", className="mb-0", style={'color': COLORS['text_dark'], 'fontWeight': 'bold'}),
+                    html.Small(f"Op: {df[df['Status']=='In Betrieb']['Leistung_MW'].mean():,.1f} | Plan: {df[df['Status']=='In Planung']['Leistung_MW'].mean():,.1f} MW", style={'color': COLORS['text_secondary']})
                 ], className="py-2")
-            ], className=card_style)
+            ], className="mb-2 shadow-sm", style=card_total_style)
         ], md=3, sm=6),
     ], className="g-2")
 
@@ -725,12 +884,12 @@ def create_capacity_trend_chart():
 
     for status in ['In Betrieb', 'In Planung']:
         d = yearly[yearly['Status'] == status]
-        color = '#28a745' if status == 'In Betrieb' else '#ffc107'
+        color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
         label = 'Operational' if status == 'In Betrieb' else 'Planned'
-        fig.add_trace(go.Bar(x=d['Year'], y=d['MW'], name=label, marker_color=color, opacity=0.8))
+        fig.add_trace(go.Bar(x=d['Year'], y=d['MW'], name=label, marker_color=color, opacity=0.9))
 
     fig.update_layout(
-        title='Annual Capacity Additions (2020+)',
+        title='<b>Annual Capacity Additions (2020+)</b>',
         xaxis_title='', yaxis_title='MW Added',
         barmode='group'
     )
@@ -784,10 +943,8 @@ def create_cumulative_capacity_chart():
         y=yearly_op_display['Cumulative'],
         name='Operational (cumulative)',
         mode='lines+markers',
-        line=dict(color='#28a745', width=3),
-        marker=dict(size=8),
-        fill='tozeroy',
-        fillcolor='rgba(40, 167, 69, 0.2)'
+        line=dict(color=COLORS['operational'], width=3),
+        marker=dict(size=8)
     ))
 
     # Planned cumulative line (projected)
@@ -801,14 +958,12 @@ def create_cumulative_capacity_chart():
             y=y_planned,
             name='+ Planned (projected)',
             mode='lines+markers',
-            line=dict(color='#ffc107', width=3, dash='dash'),
-            marker=dict(size=8),
-            fill='tonexty',
-            fillcolor='rgba(255, 193, 7, 0.2)'
+            line=dict(color=COLORS['planned'], width=3, dash='dash'),
+            marker=dict(size=8)
         ))
 
     fig.update_layout(
-        title='Cumulative Installed Capacity',
+        title='<b>Cumulative Installed Capacity</b>',
         xaxis_title='',
         yaxis_title='Total MW Installed',
     )
@@ -842,12 +997,12 @@ def create_duration_trend_chart():
 
         if cumulative_durations:
             d = pd.DataFrame(cumulative_durations)
-            color = '#28a745' if status == 'In Betrieb' else '#ffc107'
+            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
             label = 'Operational' if status == 'In Betrieb' else 'Planned'
             fig.add_trace(go.Scatter(x=d['Year'], y=d['Duration'], name=label,
                                      mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
 
-    fig.update_layout(title='Cumulative Avg Duration', xaxis_title='', yaxis_title='Hours (MW-weighted)')
+    fig.update_layout(title='<b>Cumulative Avg Duration</b>', xaxis_title='', yaxis_title='Hours (MW-weighted)')
     return apply_chart_style(fig, height=250)
 
 
@@ -873,57 +1028,87 @@ def create_size_trend_chart():
 
         if cumulative_sizes:
             d = pd.DataFrame(cumulative_sizes)
-            color = '#28a745' if status == 'In Betrieb' else '#ffc107'
+            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
             label = 'Operational' if status == 'In Betrieb' else 'Planned'
             fig.add_trace(go.Scatter(x=d['Year'], y=d['AvgMW'], name=label,
                                      mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
 
-    fig.update_layout(title='Cumulative Avg Project Size', xaxis_title='', yaxis_title='Avg MW')
+    fig.update_layout(title='<b>Cumulative Avg Project Size</b>', xaxis_title='', yaxis_title='Avg MW')
     return apply_chart_style(fig, height=250)
 
 
-def create_owner_chart(status, color, title):
-    """Create owner analysis chart for given status."""
-    owner_data = df[df['Status'] == status].groupby('Betreiber').agg({
+def create_operator_chart(status, color, title):
+    """Create operator analysis chart for given status."""
+    operator_data = df[df['Status'] == status].groupby('Betreiber').agg({
         'Leistung_MW': 'sum', 'MaStR_Nr': 'count'
     }).reset_index()
-    owner_data.columns = ['Owner', 'MW', 'Count']
-    owner_data = owner_data.sort_values('MW', ascending=True).tail(15)
+    operator_data.columns = ['Operator', 'MW', 'Count']
+    operator_data = operator_data.sort_values('MW', ascending=True).tail(15)
 
     # Truncate long names
-    owner_data['Owner_Short'] = owner_data['Owner'].apply(lambda x: x[:35] + '...' if len(x) > 35 else x)
+    operator_data['Operator_Short'] = operator_data['Operator'].apply(lambda x: x[:35] + '...' if len(x) > 35 else x)
 
     fig = go.Figure(go.Bar(
-        x=owner_data['MW'], y=owner_data['Owner_Short'], orientation='h',
-        marker_color=color, text=owner_data['MW'].round(0).astype(int),
+        x=operator_data['MW'], y=operator_data['Operator_Short'], orientation='h',
+        marker_color=color, text=operator_data['MW'].round(0).apply(lambda x: f"{int(x):,}"),
         textposition='outside', textfont=dict(size=9),
         hovertemplate='<b>%{customdata}</b><br>%{x:.1f} MW<extra></extra>',
-        customdata=owner_data['Owner']
+        customdata=operator_data['Operator']
     ))
 
-    fig.update_layout(title=title, xaxis_title='MW', yaxis_title='',
-                      margin=dict(l=150, r=40, t=40, b=30))
+    fig.update_layout(title=f'<b>{title}</b>', xaxis_title='MW', yaxis_title='',
+                      margin=dict(l=150, r=60, t=50, b=30))
+    # Extend x-axis range to make room for labels
+    max_mw = operator_data['MW'].max()
+    fig.update_xaxes(range=[0, max_mw * 1.12])
     return apply_chart_style(fig, height=400)
 
 
 def create_largest_projects_chart():
     """Create largest projects chart."""
-    largest = df.nlargest(10, 'Leistung_MW')[['Anlagename', 'Betreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status']].copy()
+    largest = df.nlargest(15, 'Leistung_MW')[['Anlagename', 'Betreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status']].copy()
+    # Sort ascending so largest appears at top of horizontal bar chart
+    largest = largest.sort_values('Leistung_MW', ascending=True)
     largest['Name_Short'] = largest['Anlagename'].apply(lambda x: x[:30] + '...' if len(x) > 30 else x)
-    colors = ['#28a745' if s == 'In Betrieb' else '#ffc107' for s in largest['Status']]
+    colors = [COLORS['operational'] if s == 'In Betrieb' else COLORS['planned'] for s in largest['Status']]
 
     fig = go.Figure(go.Bar(
         x=largest['Leistung_MW'], y=largest['Name_Short'], orientation='h',
         marker_color=colors,
-        text=[f"{mw:.0f} MW | {h:.1f}h" for mw, h in zip(largest['Leistung_MW'], largest['Dauer_Stunden'])],
+        text=[f"{mw:,.0f} MW | {h:.1f}h" for mw, h in zip(largest['Leistung_MW'], largest['Dauer_Stunden'])],
         textposition='outside', textfont=dict(size=9),
-        hovertemplate='<b>%{customdata[0]}</b><br>%{x:.0f} MW | %{customdata[1]:.0f} MWh<br>Owner: %{customdata[2]}<extra></extra>',
+        hovertemplate='<b>%{customdata[0]}</b><br>%{x:.0f} MW | %{customdata[1]:.0f} MWh<br>Operator: %{customdata[2]}<extra></extra>',
         customdata=list(zip(largest['Anlagename'], largest['Kapazitaet_MWh'], largest['Betreiber']))
     ))
 
-    fig.update_layout(title='Top 10 Largest Projects', xaxis_title='MW', yaxis_title='',
-                      margin=dict(l=180, r=60, t=40, b=30))
-    return apply_chart_style(fig, height=320)
+    fig.update_layout(title='<b>Top 15 Largest Projects</b>', xaxis_title='MW', yaxis_title='',
+                      margin=dict(l=180, r=80, t=50, b=30))
+    return apply_chart_style(fig, height=420)
+
+
+def create_longest_duration_chart():
+    """Create longest duration projects chart."""
+    longest = df.nlargest(15, 'Dauer_Stunden')[['Anlagename', 'Betreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status']].copy()
+    # Sort ascending so longest appears at top of horizontal bar chart
+    longest = longest.sort_values('Dauer_Stunden', ascending=True)
+    longest['Name_Short'] = longest['Anlagename'].apply(lambda x: x[:30] + '...' if len(x) > 30 else x)
+    colors = [COLORS['operational'] if s == 'In Betrieb' else COLORS['planned'] for s in longest['Status']]
+
+    fig = go.Figure(go.Bar(
+        x=longest['Dauer_Stunden'], y=longest['Name_Short'], orientation='h',
+        marker_color=colors,
+        text=[f"{mw:,.0f} MW | {h:.1f}h" for mw, h in zip(longest['Leistung_MW'], longest['Dauer_Stunden'])],
+        textposition='outside', textfont=dict(size=9),
+        hovertemplate='<b>%{customdata[0]}</b><br>%{customdata[1]:.0f} MW | %{x:.1f}h<br>Operator: %{customdata[2]}<extra></extra>',
+        customdata=list(zip(longest['Anlagename'], longest['Leistung_MW'], longest['Betreiber']))
+    ))
+
+    fig.update_layout(title='<b>Top 15 Longest Duration Projects</b>', xaxis_title='Hours', yaxis_title='',
+                      margin=dict(l=180, r=120, t=50, b=30))
+    # Extend x-axis range to make room for labels
+    max_duration = longest['Dauer_Stunden'].max()
+    fig.update_xaxes(range=[0, max_duration * 1.35])
+    return apply_chart_style(fig, height=420)
 
 
 def create_bundesland_chart():
@@ -936,13 +1121,13 @@ def create_bundesland_chart():
     fig = go.Figure()
     if 'In Betrieb' in bl_pivot.columns:
         fig.add_trace(go.Bar(y=bl_pivot.index, x=bl_pivot['In Betrieb'], name='Operational',
-                             orientation='h', marker_color='#28a745'))
+                             orientation='h', marker_color=COLORS['operational']))
     if 'In Planung' in bl_pivot.columns:
         fig.add_trace(go.Bar(y=bl_pivot.index, x=bl_pivot['In Planung'], name='Planned',
-                             orientation='h', marker_color='#ffc107'))
+                             orientation='h', marker_color=COLORS['planned']))
 
-    fig.update_layout(title='Capacity by Federal State', xaxis_title='MW', yaxis_title='',
-                      barmode='stack', margin=dict(l=140, r=20, t=40, b=30))
+    fig.update_layout(title='<b>Capacity by Federal State</b>', xaxis_title='MW', yaxis_title='',
+                      barmode='stack', margin=dict(l=140, r=20, t=50, b=30))
     return apply_chart_style(fig, height=400)
 
 
@@ -969,13 +1154,13 @@ def create_netzbetreiber_chart():
     fig = go.Figure()
     if 'In Betrieb' in nb_pivot.columns:
         fig.add_trace(go.Bar(y=nb_pivot.index, x=nb_pivot['In Betrieb'], name='Operational',
-                             orientation='h', marker_color='#28a745'))
+                             orientation='h', marker_color=COLORS['operational']))
     if 'In Planung' in nb_pivot.columns:
         fig.add_trace(go.Bar(y=nb_pivot.index, x=nb_pivot['In Planung'], name='Planned',
-                             orientation='h', marker_color='#ffc107'))
+                             orientation='h', marker_color=COLORS['planned']))
 
-    fig.update_layout(title='Top 15 Grid Operators by Capacity', xaxis_title='MW', yaxis_title='',
-                      barmode='stack', margin=dict(l=180, r=20, t=40, b=30))
+    fig.update_layout(title='<b>Top 15 Grid Operators by Capacity</b>', xaxis_title='MW', yaxis_title='',
+                      barmode='stack', margin=dict(l=180, r=20, t=50, b=30))
     return apply_chart_style(fig, height=400)
 
 
@@ -1048,28 +1233,34 @@ def create_excel_export():
                 size_data.append({'Year': year, 'Status': status, 'Cumulative Avg Size (MW)': avg_size})
         pd.DataFrame(size_data).to_excel(writer, sheet_name='Size Trend', index=False)
 
-        # Sheet 6: Top Owners - Operational
-        owner_op = df[df['Status'] == 'In Betrieb'].groupby('Betreiber').agg({
+        # Sheet 6: Top Operators - Operational
+        operator_op = df[df['Status'] == 'In Betrieb'].groupby('Betreiber').agg({
             'Leistung_MW': 'sum', 'Kapazitaet_MWh': 'sum', 'MaStR_Nr': 'count'
         }).reset_index()
-        owner_op.columns = ['Owner', 'MW', 'MWh', 'Project Count']
-        owner_op = owner_op.sort_values('MW', ascending=False)
-        owner_op.to_excel(writer, sheet_name='Owners - Operational', index=False)
+        operator_op.columns = ['Operator', 'MW', 'MWh', 'Project Count']
+        operator_op = operator_op.sort_values('MW', ascending=False)
+        operator_op.to_excel(writer, sheet_name='Operators - Operational', index=False)
 
-        # Sheet 7: Top Owners - Planned
-        owner_pl = df[df['Status'] == 'In Planung'].groupby('Betreiber').agg({
+        # Sheet 7: Top Operators - Planned
+        operator_pl = df[df['Status'] == 'In Planung'].groupby('Betreiber').agg({
             'Leistung_MW': 'sum', 'Kapazitaet_MWh': 'sum', 'MaStR_Nr': 'count'
         }).reset_index()
-        owner_pl.columns = ['Owner', 'MW', 'MWh', 'Project Count']
-        owner_pl = owner_pl.sort_values('MW', ascending=False)
-        owner_pl.to_excel(writer, sheet_name='Owners - Planned', index=False)
+        operator_pl.columns = ['Operator', 'MW', 'MWh', 'Project Count']
+        operator_pl = operator_pl.sort_values('MW', ascending=False)
+        operator_pl.to_excel(writer, sheet_name='Operators - Planned', index=False)
 
         # Sheet 8: Largest Projects
         largest = df.nlargest(50, 'Leistung_MW')[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status', 'Bundesland', 'Jahr']].copy()
-        largest.columns = ['Project Name', 'Owner', 'Grid Operator', 'MW', 'MWh', 'Duration (h)', 'Status', 'State', 'Year']
+        largest.columns = ['Project Name', 'Operator', 'Grid Operator', 'MW', 'MWh', 'Duration (h)', 'Status', 'State', 'Year']
         largest.to_excel(writer, sheet_name='Largest Projects', index=False)
 
-        # Sheet 9: Bundesland Summary
+        # Sheet 9: Longest Duration Projects
+        longest = df.nlargest(50, 'Dauer_Stunden')[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status', 'Bundesland', 'Jahr']].copy()
+        longest.columns = ['Project Name', 'Operator', 'Grid Operator', 'MW', 'MWh', 'Duration (h)', 'Status', 'State', 'Year']
+        longest = longest.sort_values('Duration (h)', ascending=False)
+        longest.to_excel(writer, sheet_name='Longest Duration Projects', index=False)
+
+        # Sheet 10: Bundesland Summary
         bl = df.groupby('Bundesland').agg({
             'Leistung_MW': ['sum', 'mean', 'count'],
             'Kapazitaet_MWh': 'sum',
@@ -1079,13 +1270,13 @@ def create_excel_export():
         bl = bl.sort_values('Total MW', ascending=False)
         bl.to_excel(writer, sheet_name='By State', index=False)
 
-        # Sheet 10: Bundesland by Status
+        # Sheet 11: Bundesland by Status
         bl_status = df.groupby(['Bundesland', 'Status'])['Leistung_MW'].sum().reset_index()
         bl_status.columns = ['State', 'Status', 'MW']
         bl_status_pivot = bl_status.pivot(index='State', columns='Status', values='MW').fillna(0).reset_index()
         bl_status_pivot.to_excel(writer, sheet_name='By State & Status', index=False)
 
-        # Sheet 11: Netzbetreiber Summary
+        # Sheet 12: Netzbetreiber Summary
         nb = df.groupby('Netzbetreiber').agg({
             'Leistung_MW': ['sum', 'count'],
             'Kapazitaet_MWh': 'sum'
@@ -1094,16 +1285,16 @@ def create_excel_export():
         nb = nb.sort_values('Total MW', ascending=False)
         nb.to_excel(writer, sheet_name='Grid Operators', index=False)
 
-        # Sheet 12: Netzbetreiber by Status
+        # Sheet 13: Netzbetreiber by Status
         nb_status = df.groupby(['Netzbetreiber', 'Status'])['Leistung_MW'].sum().reset_index()
         nb_status.columns = ['Grid Operator', 'Status', 'MW']
         nb_status_pivot = nb_status.pivot(index='Grid Operator', columns='Status', values='MW').fillna(0).reset_index()
         nb_status_pivot = nb_status_pivot.sort_values(nb_status_pivot.columns[1], ascending=False) if len(nb_status_pivot.columns) > 1 else nb_status_pivot
         nb_status_pivot.to_excel(writer, sheet_name='Grid Operators by Status', index=False)
 
-        # Sheet 13: Full Project List
+        # Sheet 14: Full Project List
         full_list = df[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Status', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Bundesland', 'Jahr']].copy()
-        full_list.columns = ['Project Name', 'Owner', 'Grid Operator', 'Status', 'MW', 'MWh', 'Duration (h)', 'State', 'Year']
+        full_list.columns = ['Project Name', 'Operator', 'Grid Operator', 'Status', 'MW', 'MWh', 'Duration (h)', 'State', 'Year']
         full_list = full_list.sort_values('MW', ascending=False)
         full_list.to_excel(writer, sheet_name='All Projects', index=False)
 
@@ -1119,29 +1310,42 @@ app.layout = dbc.Container([
     # Header
     dbc.Row([
         dbc.Col([
-            html.H4("Germany Grid-Scale Battery Storage", className="text-primary mb-1"),
-            html.Small("Dashboard tracking large-scale battery projects from MaStR", className="text-muted"),
+            html.H4("German Grid-Scale Battery Storage Tracker", className="mb-1",
+                    style={'color': COLORS['text_primary'], 'fontWeight': 'bold'}),
         ])
-    ], className="mb-2 mt-2"),
+    ], className="mb-2 mt-3"),
 
-    # Data source link and Export button
+    # Data source link and Export button - full width bar
     dbc.Row([
         dbc.Col([
-            dbc.Alert([
-                html.Strong("Data Source: "),
-                html.A("Marktstammdatenregister (MaStR)", href=MASTR_DATA_URL, target="_blank", className="alert-link")
-            ], color="light", className="py-2 mb-2", style={'fontSize': '0.85rem'})
-        ], md=10),
-        dbc.Col([
-            dbc.Button(
-                ["Export Excel"],
-                id="export-excel-btn",
-                color="primary",
-                size="sm",
-                className="mt-1"
-            ),
-            dcc.Download(id="download-excel")
-        ], md=2, className="text-end")
+            html.Div([
+                html.Span([
+                    html.Strong("Data Source: ", style={'color': COLORS['text_primary']}),
+                    html.A("Marktstammdatenregister (MaStR)", href=MASTR_DATA_URL, target="_blank",
+                           style={'color': COLORS['operational'], 'textDecoration': 'none', 'fontWeight': '500'}),
+                    html.Span(" | ", style={'color': COLORS['text_secondary'], 'margin': '0 8px'}),
+                    html.Span("Includes all registered operational and planned battery storage projects ≥1 MW",
+                              style={'color': COLORS['text_secondary']})
+                ]),
+                dbc.Button(
+                    "Export Excel",
+                    id="export-excel-btn",
+                    size="sm",
+                    style={'backgroundColor': COLORS['operational'], 'border': 'none', 'marginLeft': 'auto'}
+                ),
+                dcc.Download(id="download-excel")
+            ], style={
+                'display': 'flex',
+                'alignItems': 'center',
+                'justifyContent': 'space-between',
+                'backgroundColor': COLORS['background'],
+                'padding': '10px 16px',
+                'borderRadius': '4px',
+                'border': f'1px solid {COLORS["border"]}',
+                'fontSize': '0.85rem',
+                'marginBottom': '12px'
+            })
+        ])
     ]),
 
     # Summary Cards
@@ -1167,21 +1371,24 @@ app.layout = dbc.Container([
         ], md=6)
     ]),
 
-    # Owner Analysis - side by side
+    # Operator Analysis - side by side
     dbc.Row([
         dbc.Col([
-            dcc.Graph(figure=create_owner_chart('In Betrieb', '#28a745', 'Top 15 Owners - Operational'), config=CHART_CONFIG)
+            dcc.Graph(figure=create_operator_chart('In Betrieb', COLORS['operational'], 'Top 15 Operators - Operational'), config=CHART_CONFIG)
         ], md=6),
         dbc.Col([
-            dcc.Graph(figure=create_owner_chart('In Planung', '#ffc107', 'Top 15 Owners - Planned'), config=CHART_CONFIG)
+            dcc.Graph(figure=create_operator_chart('In Planung', COLORS['planned'], 'Top 15 Operators - Planned'), config=CHART_CONFIG)
         ], md=6)
     ]),
 
-    # Largest Projects
+    # Largest Projects and Longest Duration - side by side
     dbc.Row([
         dbc.Col([
             dcc.Graph(figure=create_largest_projects_chart(), config=CHART_CONFIG)
-        ])
+        ], md=6),
+        dbc.Col([
+            dcc.Graph(figure=create_longest_duration_chart(), config=CHART_CONFIG)
+        ], md=6)
     ]),
 
     # Bundesland Analysis
@@ -1190,20 +1397,22 @@ app.layout = dbc.Container([
             dcc.Graph(figure=create_bundesland_chart(), config=CHART_CONFIG)
         ], md=7),
         dbc.Col([
-            html.H6("Summary by State", className="mb-2"),
+            html.H6("Summary by State", className="mb-2",
+                    style={'fontWeight': 'bold', 'fontSize': '14px', 'color': COLORS['text_primary']}),
             dash_table.DataTable(
                 data=create_bundesland_table().to_dict('records'),
                 columns=[
                     {'name': 'State', 'id': 'Bundesland'},
-                    {'name': 'MW', 'id': 'Total MW', 'type': 'numeric'},
-                    {'name': '#', 'id': 'Count', 'type': 'numeric'},
-                    {'name': 'Avg MW', 'id': 'Avg MW', 'type': 'numeric'},
-                    {'name': 'Dur (h)', 'id': 'Avg Duration', 'type': 'numeric'}
+                    {'name': 'MW', 'id': 'Total MW', 'type': 'numeric', 'format': {'specifier': ',.0f'}},
+                    {'name': '#', 'id': 'Count', 'type': 'numeric', 'format': {'specifier': ','}},
+                    {'name': 'Avg MW', 'id': 'Avg MW', 'type': 'numeric', 'format': {'specifier': ',.1f'}},
+                    {'name': 'Dur (h)', 'id': 'Avg Duration', 'type': 'numeric', 'format': {'specifier': '.1f'}}
                 ],
-                style_table={'overflowX': 'auto', 'fontSize': '12px'},
-                style_cell={'textAlign': 'left', 'padding': '4px 8px', 'fontSize': '11px'},
-                style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'fontSize': '11px'},
-                style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'}],
+                style_table={'overflowX': 'auto'},
+                style_cell={'textAlign': 'left', 'padding': '6px 10px', 'fontSize': '11px', 'color': COLORS['text_secondary']},
+                style_header={'backgroundColor': COLORS['background'], 'fontWeight': 'bold', 'fontSize': '11px',
+                              'color': COLORS['text_primary'], 'borderBottom': f'2px solid {COLORS["border"]}'},
+                style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': COLORS['background']}],
                 page_size=16
             )
         ], md=5)
@@ -1219,43 +1428,33 @@ app.layout = dbc.Container([
     # Project Table
     dbc.Row([
         dbc.Col([
-            html.H6("Project Overview", className="mt-3 mb-2"),
-            dbc.Row([
-                dbc.Col([
-                    dcc.Dropdown(id='status-filter',
-                                 options=[{'label': 'All', 'value': 'All'},
-                                          {'label': 'Operational', 'value': 'In Betrieb'},
-                                          {'label': 'Planned', 'value': 'In Planung'}],
-                                 value='All', placeholder='Status', clearable=False, style={'fontSize': '12px'})
-                ], md=2),
-                dbc.Col([
-                    dcc.Dropdown(id='bundesland-filter',
-                                 options=[{'label': 'All States', 'value': 'All'}] +
-                                         [{'label': bl, 'value': bl} for bl in sorted(df['Bundesland'].unique())],
-                                 value='All', placeholder='State', clearable=False, style={'fontSize': '12px'})
-                ], md=2),
-            ], className="mb-2 g-2"),
+            html.H6("Project Overview", className="mt-3 mb-2",
+                    style={'fontWeight': 'bold', 'fontSize': '14px', 'color': COLORS['text_primary']}),
             dash_table.DataTable(
                 id='project-table',
                 columns=[
                     {'name': 'Project', 'id': 'Anlagename'},
-                    {'name': 'Owner', 'id': 'Betreiber'},
+                    {'name': 'Operator', 'id': 'Betreiber'},
                     {'name': 'Grid Operator', 'id': 'Netzbetreiber'},
                     {'name': 'Status', 'id': 'Status'},
                     {'name': 'MW', 'id': 'Leistung_MW', 'type': 'numeric', 'format': {'specifier': ',.1f'}},
                     {'name': 'MWh', 'id': 'Kapazitaet_MWh', 'type': 'numeric', 'format': {'specifier': ',.1f'}},
                     {'name': 'Dur (h)', 'id': 'Dauer_Stunden', 'type': 'numeric', 'format': {'specifier': '.1f'}},
                     {'name': 'State', 'id': 'Bundesland'},
-                    {'name': 'Year', 'id': 'Jahr', 'type': 'numeric'}
+                    {'name': 'Year', 'id': 'Jahr', 'type': 'numeric', 'format': {'specifier': '.0f'}}
                 ],
                 data=df.sort_values('Leistung_MW', ascending=False).to_dict('records'),
                 style_table={'overflowX': 'auto'},
-                style_cell={'textAlign': 'left', 'padding': '4px 8px', 'fontSize': '11px', 'maxWidth': '200px', 'overflow': 'hidden', 'textOverflow': 'ellipsis'},
-                style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold', 'fontSize': '11px'},
+                style_cell={'textAlign': 'left', 'padding': '6px 10px', 'fontSize': '11px', 'maxWidth': '200px',
+                            'overflow': 'hidden', 'textOverflow': 'ellipsis', 'color': COLORS['text_secondary']},
+                style_header={'backgroundColor': COLORS['background'], 'fontWeight': 'bold', 'fontSize': '11px',
+                              'color': COLORS['text_primary'], 'borderBottom': f'2px solid {COLORS["border"]}'},
                 style_data_conditional=[
-                    {'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'},
-                    {'if': {'filter_query': '{Status} = "In Betrieb"', 'column_id': 'Status'}, 'backgroundColor': '#d4edda', 'color': '#155724'},
-                    {'if': {'filter_query': '{Status} = "In Planung"', 'column_id': 'Status'}, 'backgroundColor': '#fff3cd', 'color': '#856404'}
+                    {'if': {'row_index': 'odd'}, 'backgroundColor': COLORS['background']},
+                    {'if': {'filter_query': '{Status} = "In Betrieb"', 'column_id': 'Status'},
+                     'backgroundColor': COLORS['operational_light'], 'color': COLORS['operational'], 'fontWeight': '500'},
+                    {'if': {'filter_query': '{Status} = "In Planung"', 'column_id': 'Status'},
+                     'backgroundColor': COLORS['planned_light'], 'color': COLORS['planned'], 'fontWeight': '500'}
                 ],
                 page_size=15, sort_action='native', filter_action='native'
             )
@@ -1265,28 +1464,14 @@ app.layout = dbc.Container([
     # Footer
     dbc.Row([
         dbc.Col([
-            html.Hr(className="my-2"),
+            html.Hr(style={'borderColor': COLORS['border'], 'marginTop': '24px', 'marginBottom': '12px'}),
             html.Small([
-                f"Last updated: {datetime.now().strftime('%Y-%m-%d')} | {len(df)} projects after filtering"
-            ], className="text-muted")
+                f"Last updated: {datetime.now().strftime('%Y-%m-%d')} | {len(df):,} projects after filtering"
+            ], style={'color': COLORS['text_secondary']})
         ])
     ], className="mb-3")
 
-], fluid=True, style={'maxWidth': '1400px'})
-
-
-@callback(
-    Output('project-table', 'data'),
-    Input('status-filter', 'value'),
-    Input('bundesland-filter', 'value')
-)
-def filter_table(status, bundesland):
-    filtered = df.copy()
-    if status != 'All':
-        filtered = filtered[filtered['Status'] == status]
-    if bundesland != 'All':
-        filtered = filtered[filtered['Bundesland'] == bundesland]
-    return filtered.sort_values('Leistung_MW', ascending=False).to_dict('records')
+], fluid=True, style={'maxWidth': '1400px', 'backgroundColor': '#ffffff'})
 
 
 @callback(
