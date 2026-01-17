@@ -1376,35 +1376,36 @@ def create_excel_export():
 
         pd.DataFrame(cumulative_data).to_excel(writer, sheet_name='Cumulative Capacity', index=False)
 
-        # Sheet 4: Duration Trend
-        duration_data = []
+        # Sheet 4: Duration Trend (years as columns, statuses as rows)
+        all_years = list(range(2020, 2030))
+        duration_rows = {}
         for status in ['In Betrieb', 'In Planung']:
             df_status = df[(df['Status'] == status)].dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
-            df_status = df_status.sort_values('Jahr')
-            years = sorted(df_status['Jahr'].unique())
-            years = [y for y in years if y >= 2020]
-            for year in years:
+            row = {'Status': status}
+            for year in all_years:
                 projects_up_to_year = df_status[df_status['Jahr'] <= year]
                 total_mw = projects_up_to_year['Leistung_MW'].sum()
                 if total_mw > 0:
                     weighted_duration = (projects_up_to_year['Leistung_MW'] * projects_up_to_year['Dauer_Stunden']).sum() / total_mw
                 else:
                     weighted_duration = 0
-                duration_data.append({'Year': year, 'Status': status, 'Cumulative Avg Duration (h)': weighted_duration})
-        pd.DataFrame(duration_data).to_excel(writer, sheet_name='Duration Trend', index=False)
+                row[year] = weighted_duration
+            duration_rows[status] = row
+        duration_df = pd.DataFrame([duration_rows['In Betrieb'], duration_rows['In Planung']])
+        duration_df.to_excel(writer, sheet_name='Duration Trend', index=False)
 
-        # Sheet 5: Size Trend
-        size_data = []
+        # Sheet 5: Size Trend (years as columns, statuses as rows)
+        size_rows = {}
         for status in ['In Betrieb', 'In Planung']:
             df_status = df[(df['Status'] == status)].dropna(subset=['Jahr']).copy()
-            df_status = df_status.sort_values('Jahr')
-            years = sorted(df_status['Jahr'].unique())
-            years = [y for y in years if y >= 2020]
-            for year in years:
+            row = {'Status': status}
+            for year in all_years:
                 projects_up_to_year = df_status[df_status['Jahr'] <= year]
-                avg_size = projects_up_to_year['Leistung_MW'].mean()
-                size_data.append({'Year': year, 'Status': status, 'Cumulative Avg Size (MW)': avg_size})
-        pd.DataFrame(size_data).to_excel(writer, sheet_name='Size Trend', index=False)
+                avg_size = projects_up_to_year['Leistung_MW'].mean() if len(projects_up_to_year) > 0 else 0
+                row[year] = avg_size
+            size_rows[status] = row
+        size_df = pd.DataFrame([size_rows['In Betrieb'], size_rows['In Planung']])
+        size_df.to_excel(writer, sheet_name='Size Trend', index=False)
 
         # Sheet 6: Top Operators - Operational
         operator_op = df[df['Status'] == 'In Betrieb'].groupby('Betreiber').agg({
