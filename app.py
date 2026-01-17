@@ -1129,11 +1129,7 @@ app.layout = dbc.Container([
         dbc.Col([
             dbc.Alert([
                 html.Strong("Data Source: "),
-                "Download the latest CSV from ",
-                html.A("Marktstammdatenregister (MaStR)", href=MASTR_DATA_URL, target="_blank", className="alert-link"),
-                " and save as ",
-                html.Code("202601_MaStR data.csv"),
-                " in the dashboard folder to update."
+                html.A("Marktstammdatenregister (MaStR)", href=MASTR_DATA_URL, target="_blank", className="alert-link")
             ], color="light", className="py-2 mb-2", style={'fontSize': '0.85rem'})
         ], md=10),
         dbc.Col([
