@@ -864,16 +864,20 @@ total_operational_mw = df[df['Status'] == 'In Betrieb']['Leistung_MW'].sum()
 total_planned_mw = df[df['Status'] == 'In Planung']['Leistung_MW'].sum()
 total_operational_mwh = df[df['Status'] == 'In Betrieb']['Kapazitaet_MWh'].sum()
 total_planned_mwh = df[df['Status'] == 'In Planung']['Kapazitaet_MWh'].sum()
-avg_duration_operational = df[df['Status'] == 'In Betrieb']['Dauer_Stunden'].mean()
-avg_duration_planned = df[df['Status'] == 'In Planung']['Dauer_Stunden'].mean()
+# MW-weighted average duration for consistency with charts (planned only up to 2028)
+df_op = df[df['Status'] == 'In Betrieb'].dropna(subset=['Dauer_Stunden'])
+df_pl = df[(df['Status'] == 'In Planung') & (df['Jahr'] <= 2028)].dropna(subset=['Dauer_Stunden'])
+avg_duration_operational = (df_op['Leistung_MW'] * df_op['Dauer_Stunden']).sum() / df_op['Leistung_MW'].sum() if len(df_op) > 0 else 0
+avg_duration_planned = (df_pl['Leistung_MW'] * df_pl['Dauer_Stunden']).sum() / df_pl['Leistung_MW'].sum() if len(df_pl) > 0 else 0
 count_operational = len(df[df['Status'] == 'In Betrieb'])
 count_planned = len(df[df['Status'] == 'In Planung'])
 
 
 def create_summary_cards():
     """Create compact summary statistic cards with accent borders."""
-    # Calculate total average duration
-    avg_duration_total = df['Dauer_Stunden'].mean()
+    # Calculate total MW-weighted average duration (operational + planned up to 2028)
+    df_all = df[(df['Status'] == 'In Betrieb') | ((df['Status'] == 'In Planung') & (df['Jahr'] <= 2028))].dropna(subset=['Dauer_Stunden'])
+    avg_duration_total = (df_all['Leistung_MW'] * df_all['Dauer_Stunden']).sum() / df_all['Leistung_MW'].sum() if len(df_all) > 0 else 0
 
     card_base_style = {
         'borderLeft': f'4px solid {COLORS["operational"]}',
@@ -933,172 +937,291 @@ def create_summary_cards():
     ], className="g-3")
 
 
-def create_capacity_trend_chart():
-    """Create annual capacity additions chart."""
-    df_trend = df[df['Jahr'] >= 2020].dropna(subset=['Jahr']).copy()
+def create_capacity_trend_chart(period='annual'):
+    """Create capacity additions chart (annual or quarterly)."""
+    df_trend = df.dropna(subset=['Jahr', 'Datum']).copy()
 
-    yearly = df_trend.groupby(['Jahr', 'Status']).agg({
-        'Leistung_MW': 'sum'
-    }).reset_index()
-    yearly.columns = ['Year', 'Status', 'MW']
+    if period == 'quarterly':
+        # Filter Q1 2024 to Q4 2028 for quarterly view
+        df_trend = df_trend[
+            (df_trend['Datum'] >= pd.Timestamp('2024-01-01')) &
+            (df_trend['Datum'] <= pd.Timestamp('2028-12-31'))
+        ]
+        df_trend['Quarter'] = df_trend['Datum'].dt.to_period('Q').astype(str)
 
-    fig = go.Figure()
+        grouped = df_trend.groupby(['Quarter', 'Status']).agg({
+            'Leistung_MW': 'sum'
+        }).reset_index()
+        grouped.columns = ['Period', 'Status', 'MW']
+        title = '<b>Quarterly Capacity Additions</b>'
 
-    for status in ['In Betrieb', 'In Planung']:
-        d = yearly[yearly['Status'] == status]
-        color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
-        label = 'Operational' if status == 'In Betrieb' else 'Planned'
-        fig.add_trace(go.Bar(x=d['Year'], y=d['MW'], name=label, marker_color=color, opacity=0.9))
+        fig = go.Figure()
 
-    fig.update_layout(
-        title='<b>Annual Capacity Additions</b>',
-        xaxis_title='', yaxis_title='MW Added',
-        barmode='group'
-    )
+        # Define all quarters to show on x-axis (Q1 2024 to Q4 2028)
+        all_quarters = [f"{y}Q{q}" for y in range(2024, 2029) for q in range(1, 5)]
+
+        for status in ['In Betrieb', 'In Planung']:
+            d = grouped[grouped['Status'] == status]
+            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+            label = 'Operational' if status == 'In Betrieb' else 'Planned'
+            fig.add_trace(go.Bar(x=d['Period'], y=d['MW'], name=label, marker_color=color, opacity=0.9,
+                                 hovertemplate=f'{label}: %{{y:.1f}} MW<extra></extra>'))
+
+        fig.update_layout(
+            title=title,
+            xaxis_title='', yaxis_title='MW Added',
+            barmode='group',
+            xaxis=dict(categoryorder='array', categoryarray=all_quarters, range=[-0.5, len(all_quarters) - 0.5])
+        )
+    else:
+        # Annual view (from 2020 to 2028)
+        df_trend = df_trend[(df_trend['Jahr'] >= 2020) & (df_trend['Jahr'] <= 2028)]
+        grouped = df_trend.groupby(['Jahr', 'Status']).agg({
+            'Leistung_MW': 'sum'
+        }).reset_index()
+        grouped.columns = ['Period', 'Status', 'MW']
+        title = '<b>Annual Capacity Additions</b>'
+
+        fig = go.Figure()
+
+        for status in ['In Betrieb', 'In Planung']:
+            d = grouped[grouped['Status'] == status]
+            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+            label = 'Operational' if status == 'In Betrieb' else 'Planned'
+            fig.add_trace(go.Bar(x=d['Period'], y=d['MW'], name=label, marker_color=color, opacity=0.9,
+                                 hovertemplate=f'{label}: %{{y:.1f}} MW<extra></extra>'))
+
+        fig.update_layout(
+            title=title,
+            xaxis_title='', yaxis_title='MW Added',
+            barmode='group'
+        )
+
     fig = apply_chart_style(fig, height=280, show_grid=False)
     fig.update_layout(legend=dict(orientation='h', yanchor='bottom', y=0.92, xanchor='right', x=1, font=dict(size=10)))
     return fig
 
 
-def create_cumulative_capacity_chart():
+def create_cumulative_capacity_chart(period='annual'):
     """Create cumulative capacity stacked area chart by duration category.
 
-    Logic:
+    Logic for Annual:
     - 2020-2025: Only operational projects (actual installed capacity)
     - 2026-2029: All projects (operational + planned pipeline)
     - Grey overlay on 2026+ region with 'Planned' annotation
     - Callouts showing total MW at each year
+
+    Logic for Quarterly:
+    - Q1 2024 onwards: Only operational projects
+    - Shows cumulative capacity at end of each quarter
     """
-    # Get all projects with valid year and duration
-    df_chart = df.dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
+    # Get all projects with valid date and duration
+    df_chart = df.dropna(subset=['Jahr', 'Datum', 'Dauer_Stunden']).copy()
 
     # Add duration category
     df_chart['Duration_Category'] = df_chart['Dauer_Stunden'].apply(categorize_duration)
 
-    # Define year range
-    all_years = list(range(2020, 2030))
+    if period == 'quarterly':
+        # Quarterly view: Q1 2024 to Q4 2028
+        # Q1 2024 - Q4 2025: operational only
+        # Q1 2026+: operational + planned (with grey overlay)
+        quarters = pd.period_range(start='2024Q1', end='2028Q4', freq='Q')
 
-    # Build cumulative data with the operational/planned logic
-    cumulative_data = []
-    year_totals = {}  # Store total MW for each year for callouts
+        cumulative_data = []
+        period_totals = {}
 
-    for year in all_years:
-        if year <= 2025:
-            # Up to 2025: only operational projects
-            projects_up_to_year = df_chart[
-                (df_chart['Jahr'] <= year) &
-                (df_chart['Status'] == 'In Betrieb')
-            ]
-        else:
-            # 2026+: operational base + planned projects cumulative by year
-            # First get all operational up to 2025
-            operational_base = df_chart[
-                (df_chart['Jahr'] <= 2025) &
-                (df_chart['Status'] == 'In Betrieb')
-            ]
-            # For planned projects: include those with Jahr <= current year
-            # All planned projects with Jahr <= current year get included
-            planned_up_to_year = df_chart[
-                (df_chart['Status'] == 'In Planung') &
-                (df_chart['Jahr'] <= year)
-            ]
-            # Combine all
-            projects_up_to_year = pd.concat([operational_base, planned_up_to_year]).drop_duplicates()
+        for q in quarters:
+            q_end = q.end_time
+            q_str = str(q)
 
-        # Calculate total for this year (for callouts)
-        year_totals[year] = projects_up_to_year['Leistung_MW'].sum()
+            if q < pd.Period('2026Q1'):
+                # Before Q1 2026: only operational projects
+                projects_up_to_q = df_chart[
+                    (df_chart['Datum'] <= q_end) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+            else:
+                # Q1 2026+: operational base (up to Q4 2025) + planned projects
+                operational_base = df_chart[
+                    (df_chart['Datum'] <= pd.Timestamp('2025-12-31')) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+                planned_up_to_q = df_chart[
+                    (df_chart['Datum'] <= q_end) &
+                    (df_chart['Status'] == 'In Planung')
+                ]
+                projects_up_to_q = pd.concat([operational_base, planned_up_to_q]).drop_duplicates()
 
-        # Group by duration category
+            # Calculate total for this quarter
+            period_totals[q_str] = projects_up_to_q['Leistung_MW'].sum()
+
+            # Group by duration category
+            for cat in DURATION_CATEGORIES:
+                cat_mw = projects_up_to_q[projects_up_to_q['Duration_Category'] == cat]['Leistung_MW'].sum()
+                cumulative_data.append({
+                    'Period': q_str,
+                    'Duration': cat,
+                    'MW': cat_mw
+                })
+
+        df_cumulative = pd.DataFrame(cumulative_data)
+        x_col = 'Period'
+        title = '<b>Cumulative Installed Capacity by Duration</b>'
+
+        fig = go.Figure()
+
+        # Add stacked areas
         for cat in DURATION_CATEGORIES:
-            cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
-            cumulative_data.append({
-                'Year': int(year),
-                'Duration': cat,
-                'MW': cat_mw
-            })
+            cat_data = df_cumulative[df_cumulative['Duration'] == cat]
+            if len(cat_data) > 0:
+                fig.add_trace(go.Scatter(
+                    x=cat_data[x_col],
+                    y=cat_data['MW'],
+                    name=cat,
+                    mode='lines',
+                    line=dict(width=0.5, color=DURATION_COLORS[cat]),
+                    fill='tonexty' if cat != DURATION_CATEGORIES[0] else 'tozeroy',
+                    fillcolor=DURATION_COLORS[cat],
+                    stackgroup='one',
+                    hovertemplate=f'{cat}: %{{y:,.1f}} MW<extra></extra>'
+                ))
 
-    df_cumulative = pd.DataFrame(cumulative_data)
+        # Add grey overlay for planned region (Q1 2026+)
+        max_y = max(period_totals.values()) * 1.15 if period_totals else 10000
+        quarter_list = list(period_totals.keys())
+        q1_2026_idx = quarter_list.index('2026Q1') if '2026Q1' in quarter_list else None
 
-    fig = go.Figure()
-
-    # Add stacked areas in order (shortest duration at bottom)
-    for cat in DURATION_CATEGORIES:
-        cat_data = df_cumulative[df_cumulative['Duration'] == cat].sort_values('Year')
-        if len(cat_data) > 0:
-            fig.add_trace(go.Scatter(
-                x=cat_data['Year'],
-                y=cat_data['MW'],
-                name=cat,
-                mode='lines',
-                line=dict(width=0.5, color=DURATION_COLORS[cat]),
-                fill='tonexty' if cat != DURATION_CATEGORIES[0] else 'tozeroy',
-                fillcolor=DURATION_COLORS[cat],
-                stackgroup='one',
-                hovertemplate=f'{cat}: %{{y:,.0f}} MW<extra></extra>'
-            ))
-
-    # Add grey overlay for planned region (2026-2029)
-    max_y = max(year_totals.values()) * 1.15 if year_totals else 10000
-    fig.add_shape(
-        type='rect',
-        x0=2025.5, x1=2029.5,
-        y0=0, y1=max_y,
-        fillcolor='rgba(100, 116, 139, 0.08)',
-        line=dict(width=0),
-        layer='above'
-    )
-
-    # Add "Operational" annotation at top-left of the chart area (below legend)
-    fig.add_annotation(
-        x=2020.2,
-        y=max_y * 0.95,
-        text="<i>Operational</i>",
-        showarrow=False,
-        font=dict(size=10, color='#64748B'),
-        xanchor='left'
-    )
-
-    # Add "Planned" annotation at top-left corner of the grey area (below legend)
-    fig.add_annotation(
-        x=2025.6,
-        y=max_y * 0.95,
-        text="<i>Planned</i>",
-        showarrow=False,
-        font=dict(size=10, color='#64748B'),
-        xanchor='left'
-    )
-
-    # Add callouts for total MW at each year (in GW format with suffix)
-    for year, total_mw in year_totals.items():
-        if total_mw > 0:
-            # Show in GW format with suffix
-            label = f"{total_mw/1000:.1f} GW"
-
-            fig.add_annotation(
-                x=year,
-                y=total_mw,
-                text=label,
-                showarrow=False,
-                font=dict(size=7, color=COLORS['text_secondary']),
-                yshift=18,
-                xanchor='center'
+        if q1_2026_idx is not None:
+            fig.add_shape(
+                type='rect',
+                x0=q1_2026_idx - 0.5, x1=len(quarter_list) - 0.5,
+                y0=0, y1=max_y,
+                fillcolor='rgba(100, 116, 139, 0.08)',
+                line=dict(width=0),
+                layer='above'
             )
 
-    fig.update_layout(
-        title='<b>Cumulative Installed Capacity by Duration</b>',
-        xaxis_title='',
-        yaxis_title='Total MW',
-        hovermode='x unified',
-        yaxis=dict(range=[0, max_y * 1.05])  # Extend y-axis for callout labels
-    )
+            # Add annotations
+            fig.add_annotation(
+                x=quarter_list[0],
+                y=max_y * 0.95,
+                text="<i>Operational</i>",
+                showarrow=False,
+                font=dict(size=10, color='#64748B'),
+                xanchor='left'
+            )
+            fig.add_annotation(
+                x='2026Q1',
+                y=max_y * 0.95,
+                text="<i>Planned</i>",
+                showarrow=False,
+                font=dict(size=10, color='#64748B'),
+                xanchor='left'
+            )
 
-    # Configure x-axis to avoid overlap with y-axis labels - add space before 2020
-    fig.update_xaxes(
-        tickmode='array',
-        tickvals=list(range(2020, 2030)),
-        ticktext=['  2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027', '2028', '2029'],
-        range=[2019.5, 2029.5]
-    )
+        fig.update_layout(
+            title=title,
+            xaxis_title='',
+            yaxis_title='Total MW',
+            hovermode='x unified',
+            yaxis=dict(range=[0, max_y * 1.05])
+        )
+
+    else:
+        # Annual view (original logic) - 2020 to 2028
+        all_years = list(range(2020, 2029))
+
+        cumulative_data = []
+        year_totals = {}
+
+        for year in all_years:
+            if year <= 2025:
+                projects_up_to_year = df_chart[
+                    (df_chart['Jahr'] <= year) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+            else:
+                operational_base = df_chart[
+                    (df_chart['Jahr'] <= 2025) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+                planned_up_to_year = df_chart[
+                    (df_chart['Status'] == 'In Planung') &
+                    (df_chart['Jahr'] <= year)
+                ]
+                projects_up_to_year = pd.concat([operational_base, planned_up_to_year]).drop_duplicates()
+
+            year_totals[year] = projects_up_to_year['Leistung_MW'].sum()
+
+            for cat in DURATION_CATEGORIES:
+                cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
+                cumulative_data.append({
+                    'Year': int(year),
+                    'Duration': cat,
+                    'MW': cat_mw
+                })
+
+        df_cumulative = pd.DataFrame(cumulative_data)
+
+        fig = go.Figure()
+
+        for cat in DURATION_CATEGORIES:
+            cat_data = df_cumulative[df_cumulative['Duration'] == cat].sort_values('Year')
+            if len(cat_data) > 0:
+                fig.add_trace(go.Scatter(
+                    x=cat_data['Year'],
+                    y=cat_data['MW'],
+                    name=cat,
+                    mode='lines',
+                    line=dict(width=0.5, color=DURATION_COLORS[cat]),
+                    fill='tonexty' if cat != DURATION_CATEGORIES[0] else 'tozeroy',
+                    fillcolor=DURATION_COLORS[cat],
+                    stackgroup='one',
+                    hovertemplate=f'{cat}: %{{y:,.1f}} MW<extra></extra>'
+                ))
+
+        max_y = max(year_totals.values()) * 1.15 if year_totals else 10000
+        fig.add_shape(
+            type='rect',
+            x0=2025.5, x1=2028.5,
+            y0=0, y1=max_y,
+            fillcolor='rgba(100, 116, 139, 0.08)',
+            line=dict(width=0),
+            layer='above'
+        )
+
+        fig.add_annotation(
+            x=2020.2,
+            y=max_y * 0.95,
+            text="<i>Operational</i>",
+            showarrow=False,
+            font=dict(size=10, color='#64748B'),
+            xanchor='left'
+        )
+
+        fig.add_annotation(
+            x=2025.6,
+            y=max_y * 0.95,
+            text="<i>Planned</i>",
+            showarrow=False,
+            font=dict(size=10, color='#64748B'),
+            xanchor='left'
+        )
+
+        fig.update_layout(
+            title='<b>Cumulative Installed Capacity by Duration</b>',
+            xaxis_title='',
+            yaxis_title='Total MW',
+            hovermode='x unified',
+            yaxis=dict(range=[0, max_y * 1.05])
+        )
+
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=list(range(2020, 2029)),
+            ticktext=['  2020', '2021', '2022', '2023', '2024', '2025', '2026', '2027', '2028'],
+            range=[2019.5, 2028.5]
+        )
 
     fig = apply_chart_style(fig, height=280, show_grid=False)
     fig.update_layout(legend=dict(
@@ -1113,70 +1236,199 @@ def create_cumulative_capacity_chart():
     return fig
 
 
-def create_duration_trend_chart():
+def create_duration_trend_chart(period='annual'):
     """Create cumulative average duration trend chart.
-    Shows the capacity-weighted average duration of all projects up to each year.
+    Shows the capacity-weighted average duration of all projects up to each period.
+    Two separate lines for operational vs planned.
     """
     fig = go.Figure()
 
-    for status in ['In Betrieb', 'In Planung']:
-        df_status = df[(df['Status'] == status)].dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
-        df_status = df_status.sort_values('Jahr')
+    if period == 'quarterly':
+        # Quarterly view: Q1 2024 to Q4 2028
+        # Two separate lines for operational and planned
+        quarters = pd.period_range(start='2024Q1', end='2028Q4', freq='Q')
+        quarters_operational = pd.period_range(start='2024Q1', end='2025Q4', freq='Q')
 
-        years = sorted(df_status['Jahr'].unique())
-        years = [y for y in years if y >= 2020]
+        for status in ['In Betrieb', 'In Planung']:
+            df_status = df[(df['Status'] == status)].dropna(subset=['Dauer_Stunden']).copy()
 
-        cumulative_durations = []
-        for year in years:
-            # Get all projects up to and including this year
-            projects_up_to_year = df_status[df_status['Jahr'] <= year]
-            # Calculate capacity-weighted average duration
-            total_mw = projects_up_to_year['Leistung_MW'].sum()
-            if total_mw > 0:
-                weighted_duration = (projects_up_to_year['Leistung_MW'] * projects_up_to_year['Dauer_Stunden']).sum() / total_mw
+            if status == 'In Betrieb':
+                # For operational: include projects with Datum <= q_end, PLUS projects without Datum
+                # Only show up to Q4 2025
+                df_with_date = df_status.dropna(subset=['Datum'])
+                df_without_date = df_status[df_status['Datum'].isna()]
+
+                cumulative_durations = []
+                for q in quarters_operational:
+                    q_end = q.end_time
+                    q_str = str(q)
+                    projects_with_date = df_with_date[df_with_date['Datum'] <= q_end]
+                    projects_up_to_q = pd.concat([projects_with_date, df_without_date])
+
+                    total_mw = projects_up_to_q['Leistung_MW'].sum()
+                    if total_mw > 0:
+                        weighted_duration = (projects_up_to_q['Leistung_MW'] * projects_up_to_q['Dauer_Stunden']).sum() / total_mw
+                    else:
+                        weighted_duration = None
+                    cumulative_durations.append({'Period': q_str, 'Duration': weighted_duration})
             else:
-                weighted_duration = 0
-            cumulative_durations.append({'Year': year, 'Duration': weighted_duration})
+                # For planned: cumulative up to each quarter
+                df_with_date = df_status.dropna(subset=['Datum'])
 
-        if cumulative_durations:
+                cumulative_durations = []
+                for q in quarters:
+                    q_end = q.end_time
+                    q_str = str(q)
+                    projects_up_to_q = df_with_date[df_with_date['Datum'] <= q_end]
+
+                    total_mw = projects_up_to_q['Leistung_MW'].sum()
+                    if total_mw > 0:
+                        weighted_duration = (projects_up_to_q['Leistung_MW'] * projects_up_to_q['Dauer_Stunden']).sum() / total_mw
+                    else:
+                        weighted_duration = None
+                    cumulative_durations.append({'Period': q_str, 'Duration': weighted_duration})
+
             d = pd.DataFrame(cumulative_durations)
-            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
-            label = 'Operational' if status == 'In Betrieb' else 'Planned'
-            fig.add_trace(go.Scatter(x=d['Year'], y=d['Duration'], name=label,
-                                     mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
+            d = d.dropna(subset=['Duration'])
+            if len(d) > 0:
+                color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+                label = 'Operational' if status == 'In Betrieb' else 'Planned'
+                fig.add_trace(go.Scatter(x=d['Period'], y=d['Duration'], name=label,
+                                         mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6),
+                                         hovertemplate=f'{label}: %{{y:.1f}}h<extra></extra>'))
 
-    fig.update_layout(title='<b>Cumulative Avg Duration</b>', xaxis_title='', yaxis_title='Hours (MW-weighted)')
+        fig.update_layout(title='<b>Cumulative Avg Duration</b>', xaxis_title='', yaxis_title='Hours (MW-weighted)')
+    else:
+        # Annual view - 2020 to 2028
+        for status in ['In Betrieb', 'In Planung']:
+            df_status = df[(df['Status'] == status)].dropna(subset=['Dauer_Stunden']).copy()
+            df_with_year = df_status.dropna(subset=['Jahr'])
+            years = sorted(df_with_year['Jahr'].unique())
+            years = [y for y in years if y >= 2020 and y <= 2028]
+
+            cumulative_durations = []
+            for year in years:
+                if status == 'In Betrieb':
+                    # For operational: include projects with Jahr <= year, PLUS projects without Jahr
+                    projects_with_year = df_with_year[df_with_year['Jahr'] <= year]
+                    projects_without_year = df_status[df_status['Jahr'].isna()]
+                    projects_up_to_year = pd.concat([projects_with_year, projects_without_year])
+                else:
+                    # For planned: cumulative up to each year
+                    projects_up_to_year = df_with_year[df_with_year['Jahr'] <= year]
+
+                total_mw = projects_up_to_year['Leistung_MW'].sum()
+                if total_mw > 0:
+                    weighted_duration = (projects_up_to_year['Leistung_MW'] * projects_up_to_year['Dauer_Stunden']).sum() / total_mw
+                else:
+                    weighted_duration = 0
+                cumulative_durations.append({'Year': year, 'Duration': weighted_duration})
+
+            if cumulative_durations:
+                d = pd.DataFrame(cumulative_durations)
+                color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+                label = 'Operational' if status == 'In Betrieb' else 'Planned'
+                fig.add_trace(go.Scatter(x=d['Year'], y=d['Duration'], name=label,
+                                         mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6),
+                                         hovertemplate=f'{label}: %{{y:.1f}}h<extra></extra>'))
+
+        fig.update_layout(title='<b>Cumulative Avg Duration</b>', xaxis_title='', yaxis_title='Hours (MW-weighted)')
+
     return apply_chart_style(fig, height=250, show_grid=False)
 
 
-def create_size_trend_chart():
+def create_size_trend_chart(period='annual'):
     """Create cumulative average project size trend chart.
-    Shows the average size of all projects up to each year.
+    Shows the average size of all projects up to each period.
+    Two separate lines for operational vs planned.
     """
     fig = go.Figure()
 
-    for status in ['In Betrieb', 'In Planung']:
-        df_status = df[(df['Status'] == status)].dropna(subset=['Jahr']).copy()
-        df_status = df_status.sort_values('Jahr')
+    if period == 'quarterly':
+        # Quarterly view: Q1 2024 to Q4 2028
+        # Two separate lines for operational and planned
+        quarters = pd.period_range(start='2024Q1', end='2028Q4', freq='Q')
+        quarters_operational = pd.period_range(start='2024Q1', end='2025Q4', freq='Q')
 
-        years = sorted(df_status['Jahr'].unique())
-        years = [y for y in years if y >= 2020]
+        for status in ['In Betrieb', 'In Planung']:
+            df_status = df[(df['Status'] == status)].copy()
 
-        cumulative_sizes = []
-        for year in years:
-            # Get all projects up to and including this year
-            projects_up_to_year = df_status[df_status['Jahr'] <= year]
-            avg_size = projects_up_to_year['Leistung_MW'].mean()
-            cumulative_sizes.append({'Year': year, 'AvgMW': avg_size})
+            if status == 'In Betrieb':
+                # For operational: include projects with Datum <= q_end, PLUS projects without Datum
+                # Only show up to Q4 2025
+                df_with_date = df_status.dropna(subset=['Datum'])
+                df_without_date = df_status[df_status['Datum'].isna()]
 
-        if cumulative_sizes:
+                cumulative_sizes = []
+                for q in quarters_operational:
+                    q_end = q.end_time
+                    q_str = str(q)
+                    projects_with_date = df_with_date[df_with_date['Datum'] <= q_end]
+                    projects_up_to_q = pd.concat([projects_with_date, df_without_date])
+
+                    if len(projects_up_to_q) > 0:
+                        avg_size = projects_up_to_q['Leistung_MW'].mean()
+                    else:
+                        avg_size = None
+                    cumulative_sizes.append({'Period': q_str, 'AvgMW': avg_size})
+            else:
+                # For planned: cumulative up to each quarter
+                df_with_date = df_status.dropna(subset=['Datum'])
+
+                cumulative_sizes = []
+                for q in quarters:
+                    q_end = q.end_time
+                    q_str = str(q)
+                    projects_up_to_q = df_with_date[df_with_date['Datum'] <= q_end]
+
+                    if len(projects_up_to_q) > 0:
+                        avg_size = projects_up_to_q['Leistung_MW'].mean()
+                    else:
+                        avg_size = None
+                    cumulative_sizes.append({'Period': q_str, 'AvgMW': avg_size})
+
             d = pd.DataFrame(cumulative_sizes)
-            color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
-            label = 'Operational' if status == 'In Betrieb' else 'Planned'
-            fig.add_trace(go.Scatter(x=d['Year'], y=d['AvgMW'], name=label,
-                                     mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6)))
+            d = d.dropna(subset=['AvgMW'])
+            if len(d) > 0:
+                color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+                label = 'Operational' if status == 'In Betrieb' else 'Planned'
+                fig.add_trace(go.Scatter(x=d['Period'], y=d['AvgMW'], name=label,
+                                         mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6),
+                                         hovertemplate=f'{label}: %{{y:.1f}} MW<extra></extra>'))
 
-    fig.update_layout(title='<b>Cumulative Avg Project Size</b>', xaxis_title='', yaxis_title='Avg MW')
+        fig.update_layout(title='<b>Cumulative Avg Project Size</b>', xaxis_title='', yaxis_title='Avg MW')
+    else:
+        # Annual view - 2020 to 2028
+        for status in ['In Betrieb', 'In Planung']:
+            df_status = df[(df['Status'] == status)].copy()
+            df_with_year = df_status.dropna(subset=['Jahr'])
+            years = sorted(df_with_year['Jahr'].unique())
+            years = [y for y in years if y >= 2020 and y <= 2028]
+
+            cumulative_sizes = []
+            for year in years:
+                if status == 'In Betrieb':
+                    # For operational: include projects with Jahr <= year, PLUS projects without Jahr
+                    projects_with_year = df_with_year[df_with_year['Jahr'] <= year]
+                    projects_without_year = df_status[df_status['Jahr'].isna()]
+                    projects_up_to_year = pd.concat([projects_with_year, projects_without_year])
+                else:
+                    # For planned: cumulative up to each year
+                    projects_up_to_year = df_with_year[df_with_year['Jahr'] <= year]
+
+                avg_size = projects_up_to_year['Leistung_MW'].mean() if len(projects_up_to_year) > 0 else 0
+                cumulative_sizes.append({'Year': year, 'AvgMW': avg_size})
+
+            if cumulative_sizes:
+                d = pd.DataFrame(cumulative_sizes)
+                color = COLORS['operational'] if status == 'In Betrieb' else COLORS['planned']
+                label = 'Operational' if status == 'In Betrieb' else 'Planned'
+                fig.add_trace(go.Scatter(x=d['Year'], y=d['AvgMW'], name=label,
+                                         mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=6),
+                                         hovertemplate=f'{label}: %{{y:.1f}} MW<extra></extra>'))
+
+        fig.update_layout(title='<b>Cumulative Avg Project Size</b>', xaxis_title='', yaxis_title='Avg MW')
+
     return apply_chart_style(fig, height=250, show_grid=False)
 
 
@@ -1308,7 +1560,7 @@ def create_netzbetreiber_chart():
 
 
 def create_excel_export():
-    """Create an Excel file with one sheet per visualization data."""
+    """Create an Excel file with one sheet per chart, formatted for easy Excel visualization."""
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -1321,160 +1573,312 @@ def create_excel_export():
                 'Total Capacity (MWh)', 'Total Projects', 'Average Project Size (MW)'
             ],
             'Value': [
-                total_operational_mw, total_operational_mwh, count_operational,
-                avg_duration_operational, total_planned_mw, total_planned_mwh,
-                count_planned, avg_duration_planned, total_operational_mw + total_planned_mw,
-                total_operational_mwh + total_planned_mwh, count_operational + count_planned,
-                df['Leistung_MW'].mean()
+                round(total_operational_mw, 1), round(total_operational_mwh, 1), count_operational,
+                round(avg_duration_operational, 1), round(total_planned_mw, 1), round(total_planned_mwh, 1),
+                count_planned, round(avg_duration_planned, 1), round(total_operational_mw + total_planned_mw, 1),
+                round(total_operational_mwh + total_planned_mwh, 1), count_operational + count_planned,
+                round(df['Leistung_MW'].mean(), 1)
             ]
         }
         pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
 
-        # Sheet 2: Annual Capacity Additions
-        df_trend = df[df['Jahr'] >= 2020].dropna(subset=['Jahr']).copy()
-        yearly = df_trend.groupby(['Jahr', 'Status']).agg({
-            'Leistung_MW': 'sum', 'Kapazitaet_MWh': 'sum', 'MaStR_Nr': 'count'
-        }).reset_index()
-        yearly.columns = ['Year', 'Status', 'MW', 'MWh', 'Project Count']
-        yearly.to_excel(writer, sheet_name='Annual Additions', index=False)
+        # Sheet 2: Annual Capacity Additions (pivot format for easy bar chart)
+        # Format: Year | Operational MW | Planned MW
+        df_trend = df[(df['Jahr'] >= 2020) & (df['Jahr'] <= 2028)].dropna(subset=['Jahr']).copy()
+        yearly = df_trend.groupby(['Jahr', 'Status'])['Leistung_MW'].sum().reset_index()
+        yearly_pivot = yearly.pivot(index='Jahr', columns='Status', values='Leistung_MW').fillna(0).reset_index()
+        yearly_pivot.columns.name = None
+        yearly_pivot = yearly_pivot.rename(columns={'Jahr': 'Year', 'In Betrieb': 'Operational MW', 'In Planung': 'Planned MW'})
+        yearly_pivot = yearly_pivot.round(1)
+        yearly_pivot.to_excel(writer, sheet_name='Annual Capacity Additions', index=False)
 
-        # Sheet 3: Cumulative Capacity by Duration (matches dashboard chart)
-        # Uses same logic as create_cumulative_capacity_chart:
-        # - 2020-2025: Only operational projects
-        # - 2026-2029: Operational base + planned projects cumulative by year
-        df_chart = df.dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
-        df_chart['Duration_Category'] = df_chart['Dauer_Stunden'].apply(categorize_duration)
-
-        all_years = list(range(2020, 2030))
+        # Sheet 3: Cumulative Capacity by Duration - Annual (for stacked area chart)
+        # Format: Year | <1h | 1-2h | 2-3h | 3-4h | >4h | Total MW
+        df_chart_annual = df.dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
+        df_chart_annual['Duration_Category'] = df_chart_annual['Dauer_Stunden'].apply(categorize_duration)
+        all_years = list(range(2020, 2029))
         cumulative_data = []
 
         for year in all_years:
             if year <= 2025:
-                # Up to 2025: only operational projects
-                projects_up_to_year = df_chart[
-                    (df_chart['Jahr'] <= year) &
-                    (df_chart['Status'] == 'In Betrieb')
+                projects_up_to_year = df_chart_annual[
+                    (df_chart_annual['Jahr'] <= year) &
+                    (df_chart_annual['Status'] == 'In Betrieb')
                 ]
-                period_type = 'Operational'
             else:
-                # 2026+: operational base + planned projects cumulative by year
-                operational_base = df_chart[
-                    (df_chart['Jahr'] <= 2025) &
-                    (df_chart['Status'] == 'In Betrieb')
+                operational_base = df_chart_annual[
+                    (df_chart_annual['Jahr'] <= 2025) &
+                    (df_chart_annual['Status'] == 'In Betrieb')
                 ]
-                planned_up_to_year = df_chart[
-                    (df_chart['Status'] == 'In Planung') &
-                    (df_chart['Jahr'] <= year)
+                planned_up_to_year = df_chart_annual[
+                    (df_chart_annual['Status'] == 'In Planung') &
+                    (df_chart_annual['Jahr'] <= year)
                 ]
                 projects_up_to_year = pd.concat([operational_base, planned_up_to_year]).drop_duplicates()
-                period_type = 'Operational + Planned'
 
-            row = {'Year': year, 'Type': period_type}
+            row = {'Year': int(year)}
             total_mw = 0
             for cat in DURATION_CATEGORIES:
                 cat_mw = projects_up_to_year[projects_up_to_year['Duration_Category'] == cat]['Leistung_MW'].sum()
-                row[cat] = cat_mw
+                row[cat] = round(cat_mw, 1)
                 total_mw += cat_mw
-            row['Total MW'] = total_mw
-            row['Total GW'] = total_mw / 1000
+            row['Total MW'] = round(total_mw, 1)
             cumulative_data.append(row)
 
-        pd.DataFrame(cumulative_data).to_excel(writer, sheet_name='Cumulative Capacity', index=False)
+        pd.DataFrame(cumulative_data).to_excel(writer, sheet_name='Annual Cumul Capacity Duration', index=False)
 
-        # Sheet 4: Duration Trend (years as columns, statuses as rows)
-        all_years = list(range(2020, 2030))
-        duration_rows = {}
-        for status in ['In Betrieb', 'In Planung']:
-            df_status = df[(df['Status'] == status)].dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
-            row = {'Status': status}
-            for year in all_years:
+        # Sheet 4: Cumulative Avg Duration - Annual (for line chart)
+        # Format: Year | Operational (h) | Planned (h)
+        duration_data = []
+        for year in all_years:
+            row = {'Year': int(year)}
+            for status in ['In Betrieb', 'In Planung']:
+                df_status = df[(df['Status'] == status)].dropna(subset=['Jahr', 'Dauer_Stunden']).copy()
                 projects_up_to_year = df_status[df_status['Jahr'] <= year]
                 total_mw = projects_up_to_year['Leistung_MW'].sum()
                 if total_mw > 0:
                     weighted_duration = (projects_up_to_year['Leistung_MW'] * projects_up_to_year['Dauer_Stunden']).sum() / total_mw
                 else:
                     weighted_duration = 0
-                row[year] = weighted_duration
-            duration_rows[status] = row
-        duration_df = pd.DataFrame([duration_rows['In Betrieb'], duration_rows['In Planung']])
-        duration_df.to_excel(writer, sheet_name='Duration Trend', index=False)
+                col_name = 'Operational (h)' if status == 'In Betrieb' else 'Planned (h)'
+                row[col_name] = round(weighted_duration, 2)
+            duration_data.append(row)
+        pd.DataFrame(duration_data).to_excel(writer, sheet_name='Annual Cumul Avg Duration', index=False)
 
-        # Sheet 5: Size Trend (years as columns, statuses as rows)
-        size_rows = {}
-        for status in ['In Betrieb', 'In Planung']:
-            df_status = df[(df['Status'] == status)].dropna(subset=['Jahr']).copy()
-            row = {'Status': status}
-            for year in all_years:
+        # Sheet 5: Cumulative Avg Project Size - Annual (for line chart)
+        # Format: Year | Operational (MW) | Planned (MW)
+        size_data = []
+        for year in all_years:
+            row = {'Year': int(year)}
+            for status in ['In Betrieb', 'In Planung']:
+                df_status = df[(df['Status'] == status)].dropna(subset=['Jahr']).copy()
                 projects_up_to_year = df_status[df_status['Jahr'] <= year]
                 avg_size = projects_up_to_year['Leistung_MW'].mean() if len(projects_up_to_year) > 0 else 0
-                row[year] = avg_size
-            size_rows[status] = row
-        size_df = pd.DataFrame([size_rows['In Betrieb'], size_rows['In Planung']])
-        size_df.to_excel(writer, sheet_name='Size Trend', index=False)
+                col_name = 'Operational (MW)' if status == 'In Betrieb' else 'Planned (MW)'
+                row[col_name] = round(avg_size, 1)
+            size_data.append(row)
+        pd.DataFrame(size_data).to_excel(writer, sheet_name='Annual Cumul Avg Size', index=False)
 
-        # Sheet 6: Top Operators - Operational
+        # Sheet 6: Quarterly Capacity Additions (pivot format for easy bar chart)
+        # Format: Quarter | Operational MW | Planned MW
+        df_quarterly = df.dropna(subset=['Datum']).copy()
+        df_quarterly = df_quarterly[
+            (df_quarterly['Datum'] >= pd.Timestamp('2024-01-01')) &
+            (df_quarterly['Datum'] <= pd.Timestamp('2028-12-31'))
+        ]
+        df_quarterly['Quarter'] = df_quarterly['Datum'].dt.to_period('Q').astype(str)
+        quarterly = df_quarterly.groupby(['Quarter', 'Status'])['Leistung_MW'].sum().reset_index()
+        quarterly_pivot = quarterly.pivot(index='Quarter', columns='Status', values='Leistung_MW').fillna(0).reset_index()
+        quarterly_pivot.columns.name = None
+        quarterly_pivot = quarterly_pivot.rename(columns={'In Betrieb': 'Operational MW', 'In Planung': 'Planned MW'})
+        # Ensure all quarters Q1 2024 to Q4 2028 are present
+        all_quarters_str = [f"{y}Q{q}" for y in range(2024, 2029) for q in range(1, 5)]
+        quarterly_pivot = quarterly_pivot.set_index('Quarter').reindex(all_quarters_str).fillna(0).reset_index()
+        quarterly_pivot = quarterly_pivot.rename(columns={'index': 'Quarter'})
+        quarterly_pivot = quarterly_pivot.round(1)
+        quarterly_pivot.to_excel(writer, sheet_name='Quarterly Capacity Additions', index=False)
+
+        # Sheet 7: Quarterly Cumulative Capacity by Duration (for stacked area chart)
+        # Format: Quarter | <1h | 1-2h | 2-3h | 3-4h | >4h | Total MW
+        df_chart = df.dropna(subset=['Datum', 'Dauer_Stunden']).copy()
+        df_chart['Duration_Category'] = df_chart['Dauer_Stunden'].apply(categorize_duration)
+        df_chart['Quarter'] = df_chart['Datum'].dt.to_period('Q')
+
+        all_quarters = pd.period_range(start='2024Q1', end='2028Q4', freq='Q')
+
+        quarterly_cumulative_data = []
+        for q in all_quarters:
+            # Operational: cumulative up to Q4 2025
+            if q <= pd.Period('2025Q4'):
+                op_projects = df_chart[
+                    (df_chart['Quarter'] <= q) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+            else:
+                # After Q4 2025, operational stays at Q4 2025 level
+                op_projects = df_chart[
+                    (df_chart['Quarter'] <= pd.Period('2025Q4')) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+
+            # Planned: cumulative for all quarters
+            pl_projects = df_chart[
+                (df_chart['Quarter'] <= q) &
+                (df_chart['Status'] == 'In Planung')
+            ]
+
+            # Combine for total cumulative
+            combined = pd.concat([op_projects, pl_projects]).drop_duplicates()
+
+            row = {'Quarter': str(q)}
+            total_mw = 0
+            for cat in DURATION_CATEGORIES:
+                cat_mw = combined[combined['Duration_Category'] == cat]['Leistung_MW'].sum()
+                row[cat] = round(cat_mw, 1)
+                total_mw += cat_mw
+            row['Total MW'] = round(total_mw, 1)
+            quarterly_cumulative_data.append(row)
+
+        pd.DataFrame(quarterly_cumulative_data).to_excel(writer, sheet_name='Quarterly Cumul Capacity Dur', index=False)
+
+        # Sheet 8: Quarterly Cumulative Avg Duration (for line chart)
+        # Format: Quarter | Operational (h) | Planned (h)
+        quarterly_duration_data = []
+        for q in all_quarters:
+            row = {'Quarter': str(q)}
+
+            # Operational: only until Q4 2025
+            if q <= pd.Period('2025Q4'):
+                op_q = df_chart[
+                    (df_chart['Quarter'] <= q) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+            else:
+                op_q = df_chart[
+                    (df_chart['Quarter'] <= pd.Period('2025Q4')) &
+                    (df_chart['Status'] == 'In Betrieb')
+                ]
+
+            total_mw_op = op_q['Leistung_MW'].sum()
+            if total_mw_op > 0:
+                weighted_duration_op = (op_q['Leistung_MW'] * op_q['Dauer_Stunden']).sum() / total_mw_op
+            else:
+                weighted_duration_op = 0
+            row['Operational (h)'] = round(weighted_duration_op, 2)
+
+            # Planned: all quarters
+            pl_q = df_chart[
+                (df_chart['Quarter'] <= q) &
+                (df_chart['Status'] == 'In Planung')
+            ]
+            total_mw_pl = pl_q['Leistung_MW'].sum()
+            if total_mw_pl > 0:
+                weighted_duration_pl = (pl_q['Leistung_MW'] * pl_q['Dauer_Stunden']).sum() / total_mw_pl
+            else:
+                weighted_duration_pl = 0
+            row['Planned (h)'] = round(weighted_duration_pl, 2)
+
+            quarterly_duration_data.append(row)
+
+        pd.DataFrame(quarterly_duration_data).to_excel(writer, sheet_name='Quarterly Cumul Avg Duration', index=False)
+
+        # Sheet 9: Quarterly Cumulative Avg Size (for line chart)
+        # Format: Quarter | Operational (MW) | Planned (MW)
+        df_size = df.dropna(subset=['Datum']).copy()
+        df_size['Quarter'] = df_size['Datum'].dt.to_period('Q')
+
+        quarterly_size_data = []
+        for q in all_quarters:
+            row = {'Quarter': str(q)}
+
+            # Operational: only until Q4 2025
+            if q <= pd.Period('2025Q4'):
+                op_q = df_size[
+                    (df_size['Quarter'] <= q) &
+                    (df_size['Status'] == 'In Betrieb')
+                ]
+            else:
+                op_q = df_size[
+                    (df_size['Quarter'] <= pd.Period('2025Q4')) &
+                    (df_size['Status'] == 'In Betrieb')
+                ]
+
+            avg_size_op = op_q['Leistung_MW'].mean() if len(op_q) > 0 else 0
+            row['Operational (MW)'] = round(avg_size_op, 1)
+
+            # Planned: all quarters
+            pl_q = df_size[
+                (df_size['Quarter'] <= q) &
+                (df_size['Status'] == 'In Planung')
+            ]
+            avg_size_pl = pl_q['Leistung_MW'].mean() if len(pl_q) > 0 else 0
+            row['Planned (MW)'] = round(avg_size_pl, 1)
+
+            quarterly_size_data.append(row)
+
+        pd.DataFrame(quarterly_size_data).to_excel(writer, sheet_name='Quarterly Cumul Avg Size', index=False)
+
+        # Sheet 10: Top 15 Operators - Operational (for horizontal bar chart)
         operator_op = df[df['Status'] == 'In Betrieb'].groupby('Betreiber').agg({
             'Leistung_MW': 'sum', 'Kapazitaet_MWh': 'sum', 'MaStR_Nr': 'count'
         }).reset_index()
         operator_op.columns = ['Operator', 'MW', 'MWh', 'Project Count']
-        operator_op = operator_op.sort_values('MW', ascending=False)
-        operator_op.to_excel(writer, sheet_name='Operators - Operational', index=False)
+        operator_op = operator_op.sort_values('MW', ascending=False).head(15)
+        operator_op['MW'] = operator_op['MW'].round(1)
+        operator_op['MWh'] = operator_op['MWh'].round(1)
+        operator_op.to_excel(writer, sheet_name='Top Operators Operational', index=False)
 
-        # Sheet 7: Top Operators - Planned
+        # Sheet 11: Top 15 Operators - Planned (for horizontal bar chart)
         operator_pl = df[df['Status'] == 'In Planung'].groupby('Betreiber').agg({
             'Leistung_MW': 'sum', 'Kapazitaet_MWh': 'sum', 'MaStR_Nr': 'count'
         }).reset_index()
         operator_pl.columns = ['Operator', 'MW', 'MWh', 'Project Count']
-        operator_pl = operator_pl.sort_values('MW', ascending=False)
-        operator_pl.to_excel(writer, sheet_name='Operators - Planned', index=False)
+        operator_pl = operator_pl.sort_values('MW', ascending=False).head(15)
+        operator_pl['MW'] = operator_pl['MW'].round(1)
+        operator_pl['MWh'] = operator_pl['MWh'].round(1)
+        operator_pl.to_excel(writer, sheet_name='Top Operators Planned', index=False)
 
-        # Sheet 8: Largest Projects
-        largest = df.nlargest(50, 'Leistung_MW')[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status', 'Bundesland', 'Jahr']].copy()
-        largest.columns = ['Project Name', 'Operator', 'Grid Operator', 'MW', 'MWh', 'Duration (h)', 'Status', 'State', 'Year']
-        largest.to_excel(writer, sheet_name='Largest Projects', index=False)
+        # Sheet 12: Top 15 Largest Projects (for horizontal bar chart)
+        largest = df.nlargest(15, 'Leistung_MW')[['Anlagename', 'Betreiber', 'Leistung_MW', 'Dauer_Stunden', 'Status']].copy()
+        largest.columns = ['Project Name', 'Operator', 'MW', 'Duration (h)', 'Status']
+        largest['MW'] = largest['MW'].round(1)
+        largest['Duration (h)'] = largest['Duration (h)'].round(1)
+        largest.to_excel(writer, sheet_name='Top 15 Largest Projects', index=False)
 
-        # Sheet 9: Longest Duration Projects
-        longest = df.nlargest(50, 'Dauer_Stunden')[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Status', 'Bundesland', 'Jahr']].copy()
-        longest.columns = ['Project Name', 'Operator', 'Grid Operator', 'MW', 'MWh', 'Duration (h)', 'Status', 'State', 'Year']
-        longest = longest.sort_values('Duration (h)', ascending=False)
-        longest.to_excel(writer, sheet_name='Longest Duration Projects', index=False)
+        # Sheet 13: Top 15 Longest Duration Projects (for horizontal bar chart)
+        longest = df.nlargest(15, 'Dauer_Stunden')[['Anlagename', 'Betreiber', 'Leistung_MW', 'Dauer_Stunden', 'Status']].copy()
+        longest.columns = ['Project Name', 'Operator', 'MW', 'Duration (h)', 'Status']
+        longest['MW'] = longest['MW'].round(1)
+        longest['Duration (h)'] = longest['Duration (h)'].round(1)
+        longest.to_excel(writer, sheet_name='Top 15 Longest Duration', index=False)
 
-        # Sheet 10: Bundesland Summary
+        # Sheet 14: By State (for bar chart)
         bl = df.groupby('Bundesland').agg({
-            'Leistung_MW': ['sum', 'mean', 'count'],
-            'Kapazitaet_MWh': 'sum',
-            'Dauer_Stunden': 'mean'
+            'Leistung_MW': 'sum',
+            'MaStR_Nr': 'count'
         }).reset_index()
-        bl.columns = ['State', 'Total MW', 'Avg MW', 'Project Count', 'Total MWh', 'Avg Duration (h)']
+        bl.columns = ['State', 'Total MW', 'Project Count']
         bl = bl.sort_values('Total MW', ascending=False)
+        bl['Total MW'] = bl['Total MW'].round(1)
         bl.to_excel(writer, sheet_name='By State', index=False)
 
-        # Sheet 11: Bundesland by Status
+        # Sheet 15: By State & Status (for grouped bar chart)
         bl_status = df.groupby(['Bundesland', 'Status'])['Leistung_MW'].sum().reset_index()
-        bl_status.columns = ['State', 'Status', 'MW']
-        bl_status_pivot = bl_status.pivot(index='State', columns='Status', values='MW').fillna(0).reset_index()
+        bl_status_pivot = bl_status.pivot(index='Bundesland', columns='Status', values='Leistung_MW').fillna(0).reset_index()
+        bl_status_pivot.columns.name = None
+        bl_status_pivot = bl_status_pivot.rename(columns={'Bundesland': 'State', 'In Betrieb': 'Operational MW', 'In Planung': 'Planned MW'})
+        bl_status_pivot['Total MW'] = bl_status_pivot.get('Operational MW', 0) + bl_status_pivot.get('Planned MW', 0)
+        bl_status_pivot = bl_status_pivot.sort_values('Total MW', ascending=False)
+        bl_status_pivot = bl_status_pivot.round(1)
         bl_status_pivot.to_excel(writer, sheet_name='By State & Status', index=False)
 
-        # Sheet 12: Netzbetreiber Summary
+        # Sheet 16: Top 15 Grid Operators (for bar chart)
         nb = df.groupby('Netzbetreiber').agg({
-            'Leistung_MW': ['sum', 'count'],
-            'Kapazitaet_MWh': 'sum'
+            'Leistung_MW': 'sum',
+            'MaStR_Nr': 'count'
         }).reset_index()
-        nb.columns = ['Grid Operator', 'Total MW', 'Project Count', 'Total MWh']
-        nb = nb.sort_values('Total MW', ascending=False)
-        nb.to_excel(writer, sheet_name='Grid Operators', index=False)
+        nb.columns = ['Grid Operator', 'Total MW', 'Project Count']
+        nb = nb.sort_values('Total MW', ascending=False).head(15)
+        nb['Total MW'] = nb['Total MW'].round(1)
+        nb.to_excel(writer, sheet_name='Top Grid Operators', index=False)
 
-        # Sheet 13: Netzbetreiber by Status
+        # Sheet 17: Grid Operators by Status (for grouped bar chart)
         nb_status = df.groupby(['Netzbetreiber', 'Status'])['Leistung_MW'].sum().reset_index()
-        nb_status.columns = ['Grid Operator', 'Status', 'MW']
-        nb_status_pivot = nb_status.pivot(index='Grid Operator', columns='Status', values='MW').fillna(0).reset_index()
-        nb_status_pivot = nb_status_pivot.sort_values(nb_status_pivot.columns[1], ascending=False) if len(nb_status_pivot.columns) > 1 else nb_status_pivot
+        nb_status_pivot = nb_status.pivot(index='Netzbetreiber', columns='Status', values='Leistung_MW').fillna(0).reset_index()
+        nb_status_pivot.columns.name = None
+        nb_status_pivot = nb_status_pivot.rename(columns={'Netzbetreiber': 'Grid Operator', 'In Betrieb': 'Operational MW', 'In Planung': 'Planned MW'})
+        nb_status_pivot['Total MW'] = nb_status_pivot.get('Operational MW', 0) + nb_status_pivot.get('Planned MW', 0)
+        nb_status_pivot = nb_status_pivot.sort_values('Total MW', ascending=False).head(15)
+        nb_status_pivot = nb_status_pivot.round(1)
         nb_status_pivot.to_excel(writer, sheet_name='Grid Operators by Status', index=False)
 
-        # Sheet 14: Full Project List
+        # Sheet 18: All Projects (raw data)
         full_list = df[['Anlagename', 'Betreiber', 'Netzbetreiber', 'Status', 'Leistung_MW', 'Kapazitaet_MWh', 'Dauer_Stunden', 'Bundesland', 'Jahr']].copy()
         full_list.columns = ['Project Name', 'Operator', 'Grid Operator', 'Status', 'MW', 'MWh', 'Duration (h)', 'State', 'Year']
         full_list = full_list.sort_values('MW', ascending=False)
+        full_list['MW'] = full_list['MW'].round(1)
+        full_list['MWh'] = full_list['MWh'].round(1)
+        full_list['Duration (h)'] = full_list['Duration (h)'].round(1)
         full_list.to_excel(writer, sheet_name='All Projects', index=False)
 
     output.seek(0)
@@ -1539,25 +1943,43 @@ app.layout = dbc.Container([
 
     # Section: Capacity Trends
     html.Hr(style={'borderTop': f'1px solid {COLORS["border"]}', 'marginTop': '24px', 'marginBottom': '8px'}),
-    html.H5("Capacity Trends", className="mb-3", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
-
-    # Capacity Trends - Annual and Cumulative side by side
     dbc.Row([
         dbc.Col([
-            dcc.Graph(figure=create_capacity_trend_chart(), config=CHART_CONFIG)
+            html.H5("Capacity Trends", className="mb-0", style={'color': COLORS['text_primary'], 'fontWeight': '600', 'fontSize': '1rem'}),
+        ], width='auto'),
+        dbc.Col([
+            dbc.RadioItems(
+                id='capacity-trend-period',
+                options=[
+                    {'label': 'Annual', 'value': 'annual'},
+                    {'label': 'Quarterly', 'value': 'quarterly'},
+                ],
+                value='annual',
+                inline=True,
+                style={'fontSize': '0.85rem'},
+                inputStyle={'marginRight': '4px'},
+                labelStyle={'marginRight': '16px', 'color': COLORS['text_secondary']},
+            )
+        ], width='auto', className="d-flex align-items-center"),
+    ], className="mb-3 align-items-center"),
+
+    # Capacity Trends - Additions and Cumulative side by side
+    dbc.Row([
+        dbc.Col([
+            dcc.Graph(id='capacity-trend-chart', figure=create_capacity_trend_chart(), config=CHART_CONFIG)
         ], md=6),
         dbc.Col([
-            dcc.Graph(figure=create_cumulative_capacity_chart(), config=CHART_CONFIG)
+            dcc.Graph(id='cumulative-capacity-chart', figure=create_cumulative_capacity_chart(), config=CHART_CONFIG)
         ], md=6)
     ]),
 
     # Duration and Size Trends - side by side
     dbc.Row([
         dbc.Col([
-            dcc.Graph(figure=create_duration_trend_chart(), config=CHART_CONFIG)
+            dcc.Graph(id='duration-trend-chart', figure=create_duration_trend_chart(), config=CHART_CONFIG)
         ], md=6),
         dbc.Col([
-            dcc.Graph(figure=create_size_trend_chart(), config=CHART_CONFIG)
+            dcc.Graph(id='size-trend-chart', figure=create_size_trend_chart(), config=CHART_CONFIG)
         ], md=6)
     ], className="mt-2"),
 
@@ -1677,6 +2099,23 @@ app.layout = dbc.Container([
     ], className="mb-4")
 
 ], fluid=True, style={'maxWidth': '1400px', 'backgroundColor': '#ffffff', 'fontFamily': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'})
+
+
+@callback(
+    Output('capacity-trend-chart', 'figure'),
+    Output('cumulative-capacity-chart', 'figure'),
+    Output('duration-trend-chart', 'figure'),
+    Output('size-trend-chart', 'figure'),
+    Input('capacity-trend-period', 'value')
+)
+def update_capacity_trend_charts(period):
+    """Update all 4 capacity trend charts based on period selection."""
+    return (
+        create_capacity_trend_chart(period),
+        create_cumulative_capacity_chart(period),
+        create_duration_trend_chart(period),
+        create_size_trend_chart(period)
+    )
 
 
 @callback(
